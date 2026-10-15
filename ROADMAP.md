@@ -19,6 +19,9 @@
   4. Export SVG / Copy SVG.
   5. What doesn't trace well (gradients, small text, small pictures, photos) — the same message as the tips.
   "Don't show again" + reopen any time from Help. Remembered in settings. No pop-up chain: one window, a few steps.
+- **One window only (single instance)** (owner 2026-10-16): clicking "Open" in the Microsoft Store (or the Start
+  menu) while the app is already running opened a SECOND window. A second launch must hand over to the running
+  window (bring it to the front; pass along a PDF it was asked to open) and then exit.
 
 ## Next milestone (v0.4.4)
 Vecto stays in beta: every release is 0.4.x.
