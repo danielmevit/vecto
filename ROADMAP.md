@@ -23,9 +23,9 @@ Vecto stays in beta: every release is 0.4.x.
   in 0.4.4, see docs/ai/DECISIONS.md and NOTICE.
 
 ### M2 — Tracing fixes
-- **Near-identical light tints** (cream #fff6e8 and white became one near-white colour on the Store cat, pale blue
-  #f1f6ff clouds likewise). A first fix exists on branch agent/claudehigh-044 (06abcb7): the tints survive but the
-  fix leaves specks of the kept tints along edges (its own test fails) — finish before merging.
+- [x] **Near-identical light tints** (cream #fff6e8 and white became one near-white colour on the Store cat, pale blue
+  #f1f6ff clouds likewise) — large flat light fills keep their own colour; small specks of a kept tint are absorbed
+  (VEC-44 + VEC-45).
 - **Exact ellipses** (and better small rounded shapes): circles are fitted exactly, but ellipses fall back to Bezier
   approximations that wobble or flatten at 512 px inputs (cat eyes/cheeks/nose in the Store art); add an ellipse
   primitive like the circle fit, and check small rounded-triangle shapes.

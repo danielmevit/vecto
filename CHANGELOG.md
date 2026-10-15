@@ -6,6 +6,9 @@
   service, must share their source code. Companies that want Vecto in a closed product can buy a commercial
   licence instead (dual licensing). Versions up to and including 0.4.3 stay MIT. See NOTICE. The Vecto name
   and logo belong to Daniel Mitev (Daniel Mevit); forks must use a different name and logo.
+- **Light pastel colours keep their own colour.** Cream or pale-blue shapes next to white no longer fade
+  into one near-white colour, and the tiny stray dots of that colour along outlines are cleaned up. Results
+  on our test sets are otherwise unchanged and identical on Windows, Linux and macOS.
 
 ## v0.4.3 — 2026-10-13
 
