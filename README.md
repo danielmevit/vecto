@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/readme/featured.jpg" alt="Vecto — Image to Vector: turn PNG and JPG logos, icons and illustrations into clean, editable SVG"/>
+  <img src="assets/readme/featured.jpg" alt="Vecto — Image to Vector: the Vecto logo, pixels on the left turning into a clean vector path on the right"/>
 </p>
 
 <h1 align="center">Vecto</h1>
@@ -121,17 +121,6 @@ compact SVG. The full stage-by-stage map with parameters and code anchors lives 
 
 Every algorithm is from the open literature (Schneider curve fitting, k-means++, Kåsa
 circle fit, Oklab, Douglas–Peucker) — no license-encumbered code anywhere in the engine.
-
-## Comparison
-
-| | Vecto | potrace / Inkscape | Illustrator Image Trace | Vector Magic |
-|---|---|---|---|---|
-| Price | **Free, MIT** | Free | Subscription | Paid |
-| Full color | ✅ | ⚠️ per-layer stacking | ✅ | ✅ |
-| Gap/overlap-free output | ✅ planar | ❌ | ⚠️ | ✅ |
-| Exact lines & circles | ✅ | lines only | ❌ | ❌ |
-| Open source | ✅ | ✅ | ❌ | ❌ |
-| Headless CLI + bench | ✅ | CLI only | ❌ | ❌ |
 
 ## Roadmap
 
