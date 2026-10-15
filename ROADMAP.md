@@ -10,6 +10,16 @@
   (`site/`, Astro → GitHub Pages); quick wins 2026-07-19: PNG export, nodes view,
   settings persistence, CLI batch mode
 
+## Next version (v0.4.5) — MUST
+- **First-launch onboarding** (owner requirement 2026-10-15, same for Laydown and Eqho). A short, skippable
+  welcome on the very first start, plain language a first-time user understands:
+  1. What Vecto does: picture in, clean SVG out — best for logos, icons and flat illustrations.
+  2. How to start: drop, paste (Ctrl+V) or open a picture.
+  3. Style and Detail in one sentence each — "Not sure? Keep Auto and Medium."
+  4. Export SVG / Copy SVG.
+  5. What doesn't trace well (gradients, small text, small pictures, photos) — the same message as the tips.
+  "Don't show again" + reopen any time from Help. Remembered in settings. No pop-up chain: one window, a few steps.
+
 ## Next milestone (v0.4.4)
 Vecto stays in beta: every release is 0.4.x.
 
