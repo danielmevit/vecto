@@ -1,5 +1,12 @@
 # Changelog — Vecto
 
+## Unreleased
+
+- **Licence: AGPL-3.0 from this version.** Vecto stays open source; anyone who ships it, or runs it as a
+  service, must share their source code. Companies that want Vecto in a closed product can buy a commercial
+  licence instead (dual licensing). Versions up to and including 0.4.3 stay MIT. See NOTICE. The Vecto name
+  and logo belong to Daniel Mitev (Daniel Mevit); forks must use a different name and logo.
+
 ## v0.4.3 — 2026-10-13
 
 Tracing quality round. Against 0.4.2 on our test sets (wrong pixels vs the original artwork):
