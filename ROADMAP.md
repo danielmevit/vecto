@@ -35,8 +35,9 @@ Vecto stays in beta: every release is 0.4.x.
   3 -> 2) — VEC-44 started the bench but was cut off by the usage limit; values unchanged until measured.
 
 ### M3 — In-app tips
-- Gentle tip when an image has smooth gradients (they trace as bands of colour).
-- Tip when an image is small (around 128 px or less): suggest the largest version available.
+- [x] Gentle tip when an image has smooth gradients (they trace as bands of colour).
+- [x] Tip when an image is small (around 128 px or less): suggest the largest version available.
+  (VEC-46: status-bar tip; gradient check fires on the gradient logos and on none of the flat bench images)
 
 ## Later 0.4.x
 - **CAD / line-art centerline mode** (GitHub issue #1) — constant-width strokes as paths with a stroke weight; see
