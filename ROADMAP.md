@@ -11,22 +11,40 @@
   settings persistence, CLI batch mode
 
 ## Next milestone (v0.4.4)
-- **App icon on a solid plate** (owner request 2026-10-13): the current icon is transparent (pixel "V" + thin blue
-  outline strokes) and gets lost on dark taskbars and on blue/accent Start tiles. Put it on a solid rounded plate
-  (keep the pixel-V + vector-outline idea), regenerate EVERY size: `assets/vecto.ico` (16-256 px multi-size),
+Vecto stays in beta: every release is 0.4.x.
+
+### M1 — Housekeeping
+- **App icon on a solid plate** (owner request 2026-10-13, owner design): the current icon is transparent (pixel "V" +
+  thin blue outline strokes) and gets lost on dark taskbars and on blue/accent Start tiles. Put it on a solid rounded
+  plate (keep the pixel-V + vector-outline idea), regenerate EVERY size: `assets/vecto.ico` (16-256 px multi-size),
   `assets/msix/*` (StoreLogo, Square44x44 incl. targetsize/unplated variants, Square150x150, Wide if added),
   `assets/Vecto_Logo_1024x1024.png`, site favicon. Check contrast on light, dark and accent backgrounds at 16/24/32 px.
-- **Relicense to AGPL-3.0** (owner decision 2026-10-14, dual licensing; v0.4.3 and earlier stay MIT) — see docs/ai/DECISIONS.md.
-- Small text in JPEGs (thin letters deform, faint captions vanish) — text-aware tracing.
-- Exact ellipses (and better small rounded shapes): circles are fitted exactly, but ellipses fall back to Bezier
+- [x] **Relicense to AGPL-3.0-only** (owner decision 2026-10-14, dual licensing; v0.4.3 and earlier stay MIT) — done
+  in 0.4.4, see docs/ai/DECISIONS.md and NOTICE.
+
+### M2 — Tracing fixes
+- **Near-identical light tints** (cream #fff6e8 and white became one near-white colour on the Store cat, pale blue
+  #f1f6ff clouds likewise). A first fix exists on branch agent/claudehigh-044 (06abcb7): the tints survive but the
+  fix leaves specks of the kept tints along edges (its own test fails) — finish before merging.
+- **Exact ellipses** (and better small rounded shapes): circles are fitted exactly, but ellipses fall back to Bezier
   approximations that wobble or flatten at 512 px inputs (cat eyes/cheeks/nose in the Store art); add an ellipse
   primitive like the circle fit, and check small rounded-triangle shapes.
-- Partly hidden circles (a sun behind waves, 512 px) trace as visible polygons instead of arcs — the circle fit must
-  also cover open arcs between junctions.
-- Near-identical light tints merge (cream #fff6e8 and white became one near-white colour on the Store cat) — the
-  palette merge threshold is too coarse for light colours.
-- pattern-tiles-style JPEGs: noisy smoothing per chain (fewer passes on curved chains) to recover the last realistic
-  regression vs 0.4.2.
+- **Partly hidden circles** (a sun behind waves, 512 px) trace as visible polygons instead of arcs — the circle fit
+  must also cover open arcs between junctions.
+- **Fork tuning values check** (Archers007/vecto, Detail High: fit tolerance 0.09 -> 0.0225 and minimum region area
+  3 -> 2) — VEC-44 started the bench but was cut off by the usage limit; values unchanged until measured.
+
+### M3 — In-app tips
+- Gentle tip when an image has smooth gradients (they trace as bands of colour).
+- Tip when an image is small (around 128 px or less): suggest the largest version available.
+
+## Later 0.4.x
+- **CAD / line-art centerline mode** (GitHub issue #1) — constant-width strokes as paths with a stroke weight; see
+  docs/ai/research/2026-10-12-cad-mode-research.md.
+- **Small text in JPEGs** (thin letters deform, faint captions vanish) — text-aware tracing.
+- **JPEG tile patterns** (pattern-tiles-style JPEGs): noisy smoothing per chain (fewer passes on curved chains) to
+  recover the last realistic regression vs 0.4.2.
+- **Gradient fills** — detect smooth gradients and emit SVG gradients instead of colour bands.
 
 ## Phase 4 — VM-fashion UX
 - Wizard flow: fully-automatic vs basic (image type → detail → colors) vs advanced
