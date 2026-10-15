@@ -23,6 +23,14 @@
   menu) while the app is already running opened a SECOND window. A second launch must hand over to the running
   window (bring it to the front; pass along a picture it was asked to open) and then exit.
 
+## v0.4.6 — the app in many languages (owner 2026-10-16)
+- **Interface languages:** move every UI text (window, menus, buttons, tips, onboarding, messages, installer/Store
+  strings) into translation files; follow the Windows display language, with a language picker in onboarding and
+  settings. Same plan as Eqho and Laydown/Vecto, shared word list where possible.
+- Wave 1 languages: **main** — English, German, Spanish, French, Italian, Portuguese, Dutch, Polish, Russian, Ukrainian, Turkish, Japanese, Chinese (Simplified), Korean; **Balkan** — Macedonian, Serbian (Cyrillic + Latin), Croatian, Bosnian, Slovenian, Bulgarian, Albanian, Romanian, Greek; **Central Europe** — Czech, Slovak. Later waves: as many more as quality allows (owner: "as huge as it can be").
+- Translations by AI workers first, native-speaker review welcome; right-to-left languages only after the layout is
+  checked for them. Store listings can be localized per language in Partner Center afterwards.
+
 ## Next milestone (v0.4.4)
 Vecto stays in beta: every release is 0.4.x.
 
