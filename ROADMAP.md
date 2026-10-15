@@ -14,11 +14,14 @@
 Vecto stays in beta: every release is 0.4.x.
 
 ### M1 — Housekeeping
-- **App icon on a solid plate** (owner request 2026-10-13, owner design): the current icon is transparent (pixel "V" +
+- [x] **App icon on a solid plate** (owner request 2026-10-13, owner design): the current icon is transparent (pixel "V" +
   thin blue outline strokes) and gets lost on dark taskbars and on blue/accent Start tiles. Put it on a solid rounded
   plate (keep the pixel-V + vector-outline idea), regenerate EVERY size: `assets/vecto.ico` (16-256 px multi-size),
   `assets/msix/*` (StoreLogo, Square44x44 incl. targetsize/unplated variants, Square150x150, Wide if added),
   `assets/Vecto_Logo_1024x1024.png`, site favicon. Check contrast on light, dark and accent backgrounds at 16/24/32 px.
+  Done 2026-10-15: navy plate (#0f1f45) with the white pixel-V, chosen by the owner from real-context mockups
+  (store-images/icon-options); larger V at 16-32 px; brand logo `Vecto_Logo_1024x1024.png` stays transparent, app
+  icon master is `assets/Vecto_Icon_1024x1024.png`.
 - [x] **Relicense to AGPL-3.0-only** (owner decision 2026-10-14, dual licensing; v0.4.3 and earlier stay MIT) — done
   in 0.4.4, see docs/ai/DECISIONS.md and NOTICE.
 

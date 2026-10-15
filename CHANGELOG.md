@@ -9,6 +9,8 @@
 - **Light pastel colours keep their own colour.** Cream or pale-blue shapes next to white no longer fade
   into one near-white colour, and the tiny stray dots of that colour along outlines are cleaned up. Results
   on our test sets are otherwise unchanged and identical on Windows, Linux and macOS.
+- **New app icon.** The white Vecto "V" now sits on a solid navy rounded square, so it no longer disappears on
+  dark taskbars and stays clear at small sizes (taskbar, Start menu, desktop, Store and the website tab).
 - **Friendly tips for pictures that don't trace well.** A small picture (under 256 px on a side) gets a tip to
   use a bigger version; a picture with smooth colour fades explains that fades come out as bands of colour and
   that flat colours trace best. One line in the status bar, no pop-ups, and the traced result never changes.
