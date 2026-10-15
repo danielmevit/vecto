@@ -31,8 +31,11 @@ Vecto stays in beta: every release is 0.4.x.
   primitive like the circle fit, and check small rounded-triangle shapes.
 - **Partly hidden circles** (a sun behind waves, 512 px) trace as visible polygons instead of arcs — the circle fit
   must also cover open arcs between junctions.
-- **Fork tuning values check** (Archers007/vecto, Detail High: fit tolerance 0.09 -> 0.0225 and minimum region area
-  3 -> 2) — VEC-44 started the bench but was cut off by the usage limit; values unchanged until measured.
+- [x] **Fork tuning values check** (Archers007/vecto, Detail High: fit tolerance 0.09 -> 0.0225, minimum region area
+  3 -> 2). Measured 2026-10-15 at Detail High: wrong pixels drop (main clean 0.38% -> 0.20%, realistic 1.41% -> 1.23%)
+  but nodes grow +22% to +83% (main jpeg 240 -> 384, realistic 1482 -> 2203, Mona Lisa 84k -> 154k) and
+  flag-japan__small gets worse. Not adopted as the default (rule: no more than +15% nodes). Possible later: an optional
+  "Detail: Maximum" level using these values, for users who want the closest match and accept bigger files.
 
 ### M3 — In-app tips
 - [x] Gentle tip when an image has smooth gradients (they trace as bands of colour).
