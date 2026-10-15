@@ -223,6 +223,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         try
         {
             var result = await Task.Run(() => Tracer.Trace(raster, options, cts.Token));
+            var hint = await Task.Run(() => ImageHints.Analyze(raster));
             if (cts.IsCancellationRequested) return;
             _result = result;
             VectorImage = VectorRendering.ToDrawingImage(result.Document);
@@ -240,7 +241,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 };
             }).ToList();
             var d = result.Diagnostics;
-            Status = $"Traced in {d.TotalMs} ms — {result.Document.Palette.Count} colors, {d.RegionCount} regions, {d.NodeCount} nodes";
+            Status = $"Traced in {d.TotalMs} ms — {result.Document.Palette.Count} colors, {d.RegionCount} regions, {d.NodeCount} nodes" + HintText(hint);
             StatsText = $"style {d.Params.Style}   detail {(DetailLevel)_detailIndex}\n" +
                         $"regions {d.RegionCount}   chains {d.ChainCount}   nodes {d.NodeCount}\n" +
                         $"palette {d.PaletteMs} ms   segment {d.SegmentMs} ms\n" +
@@ -254,6 +255,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Status = "Error: " + ex.Message;
         }
     }
+
+    static string HintText(ImageHints.Result h) => h.Hint switch
+    {
+        ImageHint.SmallPicture => $"\nTip: this picture is small ({h.ContentWidth} × {h.ContentHeight}). A bigger version gives a cleaner result.",
+        ImageHint.SmoothGradients => "\nTip: smooth colour fades come out as bands of colour. Flat colours trace best.",
+        _ => "",
+    };
 
     public string BuildSvg() =>
         SvgWriter.Write((_result ?? throw new InvalidOperationException("no trace result yet")).Document);
