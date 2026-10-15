@@ -5,7 +5,7 @@
 boundary is fitted once and shared by both adjacent regions, so the output has no gaps and
 no overlaps between shapes. C# / .NET 8 / WPF.
 
-**Current status:** v0.4.2 **live on the Microsoft Store** (v0.4.3 prepared on `dev`, release pending) ($7.99 one-time,
+**Current status:** v0.4.4 released 2026-10-15 (GitHub; Store update submitted by the owner); v0.4.3 was the previous release ($7.99 one-time,
 https://apps.microsoft.com/detail/9PM61P4NC8J2) and free/open-source on GitHub Releases;
 product site is Store-first at https://danielmevit.github.io/vecto/ (`site/`, deploys from
 `main`). Full snapshot in `STATUS.md`.

@@ -5,7 +5,7 @@ Point-in-time status for any agent picking up Vecto. Living orientation is in
 
 ## Shipped / live
 - **v0.4.2** is the current release (GitHub Releases: app + CLI + MSIX + cross-platform CLI binaries).
-- **v0.4.3** prepared on `dev` 2026-10-13 (tracing quality round, see CHANGELOG); release pending owner go.
+- **v0.4.4** released 2026-10-15: navy app icon, in-app tips (small pictures, smooth fades), light tints kept, AGPL-3.0 relicense (see CHANGELOG). v0.4.3 released 2026-10-14 (tracing quality round).
 - **Live on the Microsoft Store**: https://apps.microsoft.com/detail/9PM61P4NC8J2 — **$7.99** one-time (no subscription, no trial). Store ID `9PM61P4NC8J2`.
 - Also **free and open source (AGPL-3.0-only from v0.4.4; v0.4.3 and earlier MIT)** — the same app is downloadable free from GitHub Releases, and the source builds it. The Store purchase buys convenience: one-click, auto-updating, signed install, and it supports development.
 - **Product site is Store-first**, live at https://danielmevit.github.io/vecto/ (deploys from `main` via `.github/workflows/deploy.yml`). The site is the **github.io** URL — `vecto.app` is an unrelated parking page, not this project.

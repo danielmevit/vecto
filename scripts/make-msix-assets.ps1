@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 
 $root = (Resolve-Path "$PSScriptRoot\..").Path
-$src = "$root\assets\Vecto_Logo_1024x1024.png"
+$src = "$root\assets\Vecto_Icon_1024x1024.png"   # app icon master (navy plate + white V, docs/brand/BRAND.md)
 $outDir = "$root\assets\msix"
 New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 

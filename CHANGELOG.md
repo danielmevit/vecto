@@ -1,6 +1,9 @@
 # Changelog — Vecto
 
-## Unreleased
+## v0.4.4 — 2026-10-15
+
+New app icon, friendlier tips, pastel colours kept, and a new licence: Vecto is AGPL-3.0 from this version
+(0.4.3 and earlier stay MIT), with commercial licences available.
 
 - **Licence: AGPL-3.0 from this version.** Vecto stays open source; anyone who ships it, or runs it as a
   service, must share their source code. Companies that want Vecto in a closed product can buy a commercial
