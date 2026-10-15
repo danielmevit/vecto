@@ -134,6 +134,8 @@ The repo is agent-friendly and human-friendly: start at [`AGENTS.md`](AGENTS.md)
 engine change should pass `vecto bench` before/after. PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). By contributing, you agree
 that Daniel Mitev may relicense your contribution, including under commercial licences.
 
+Brand (name, logo, app icon, colours): [docs/brand/BRAND.md](docs/brand/BRAND.md).
+
 ## License
 
 From v0.4.4 on, Vecto is licensed under the [GNU AGPL-3.0-only](LICENSE) — © 2026 Daniel Mitev

@@ -46,3 +46,5 @@ dotnet.exe test Vecto.Tests -c Release
 output lives in `C:\Program Files\Vector Magic\Samples\Sample Output`. Current parity on
 "Logo With Blending Small": identical palette (#1404ab/#ffffff), 8 paths vs 8,
 96 nodes vs 96, planarity deviation 0.00%. Never commit VM's sample images.
+
+**Brand:** name, logo vs app icon, colours and type live in `docs/brand/BRAND.md` (app icon = white V on navy #0F1F45; shared accent #0C8CE9).
