@@ -1,0 +1,42 @@
+Vecto — Image to Vector
+Copyright (C) 2026 Daniel Mitev
+Public attribution: Daniel Mevit (@danielmevit)
+Original project: https://github.com/danielmevit/vecto
+
+From v0.4.4 on, unless otherwise indicated, original Vecto code and
+documentation are licensed under the GNU Affero General Public License,
+version 3 only (SPDX-License-Identifier: AGPL-3.0-only).
+Releases up to and including v0.4.3 were released under the MIT License
+and remain available under it.
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, version 3 of the License.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+General Public License for more details, including liability limitations
+subject to applicable law.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. See LICENSE or https://www.gnu.org/licenses/.
+
+Preserve the required copyright, licensing and warranty notices when
+redistributing covered copies or modified versions, as the license requires.
+
+Commercial licensing
+
+Vecto is dual-licensed. To use Vecto in a closed-source or commercial
+product without the obligations of the GNU AGPLv3, a commercial licence
+is available from the author: contact Daniel Mevit (@danielmevit,
+https://github.com/danielmevit).
+
+Trademark
+
+The Vecto name and logo belong to Daniel Mitev (Daniel Mevit); forks
+must use a different name and logo. The AGPL licenses the code, not the
+name or the logo.
+
+Third-party components bundled with Vecto keep their own licences; see
+THIRD-PARTY-NOTICES.md.

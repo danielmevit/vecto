@@ -53,14 +53,14 @@ const features = [
   },
   {
     title: "Open source, no lock-in",
-    body: "MIT-licensed and fully open source — no trial clock, no watermark, no “pro” tier holding the good output hostage. Buy it on the Store to support development, or read and build the code yourself.",
+    body: "AGPL-3.0-licensed and fully open source — no trial clock, no watermark, no “pro” tier holding the good output hostage. Buy it on the Store to support development, or read and build the code yourself.",
   },
 ];
 
 const faqs = [
   {
     q: "Is it free or paid?",
-    a: "Both, and there's no catch either way. The Microsoft Store version is $7.99 — one-click install, automatic updates, a signed app, and it directly supports development. Vecto is also open source under the MIT license, so you can download the same app free from GitHub or build it yourself. No trial clock, watermark or crippled tier anywhere — you're paying for convenience and to support the work, not for features.",
+    a: "Both, and there's no catch either way. The Microsoft Store version is $7.99 — one-click install, automatic updates, a signed app, and it directly supports development. Vecto is also open source under the AGPL-3.0 license, so you can download the same app free from GitHub or build it yourself. No trial clock, watermark or crippled tier anywhere — you're paying for convenience and to support the work, not for features.",
   },
   {
     q: "Is my artwork uploaded anywhere?",
@@ -143,7 +143,7 @@ const cmp = [
       screenshot: "https://danielmevit.github.io/vecto/assets/vecto_app_screenshot.png",
       softwareVersion: version,
       author: { "@type": "Person", name: author, url: "https://github.com/danielmevit" },
-      license: "https://opensource.org/license/mit",
+      license: "https://www.gnu.org/licenses/agpl-3.0.html",
       isAccessibleForFree: true,
       offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
       keywords:
@@ -410,7 +410,7 @@ const cmp = [
         )}
       </div>
       <p class="under-cta">
-        One file, no install — v{version} · MIT · CLI for Linux &amp; macOS · nothing uploaded, no account
+        One file, no install — v{version} · AGPL-3.0 · CLI for Linux &amp; macOS · nothing uploaded, no account
       </p>
 
       <div class="shot">
@@ -512,7 +512,7 @@ const cmp = [
           <h2>Download Vecto {version}</h2>
           {storeLive
             ? <p>One click and {storePrice} on the Microsoft Store, or the free open-source build direct.</p>
-            : <p>Free under the MIT open-source license. No account, no strings.</p>}
+            : <p>Free under the AGPL-3.0 open-source license. No account, no strings.</p>}
         </div>
         <div class="dl-grid">
           {storeLive && (
@@ -577,7 +577,7 @@ const cmp = [
             <a href={releases}>Releases</a> ·
             <a href={`${base}/changelog/`}>Changelog</a> ·
             <a href={`${base}/privacy/`}>Privacy</a> ·
-            <a href={`${repo}/blob/main/LICENSE`}>MIT License</a>
+            <a href={`${repo}/blob/main/LICENSE`}>AGPL-3.0 License</a>
           </div>
         </div>
       </div>

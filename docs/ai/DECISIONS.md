@@ -53,15 +53,22 @@ WPF written from scratch; color/spacing values are unprotectable facts. Do not p
 Toolcraft CSS/JS/components into this repo; that would attach their license.
 
 
-## Pending: relicense Vecto from MIT to AGPL-3.0 (owner decision, 2026-10-14)
+## Relicense Vecto from MIT to AGPL-3.0-only — done in v0.4.4 (owner decision, 2026-10-14)
 
-The owner wants future Vecto versions (from v0.4.4 on) under **AGPL-3.0**, to allow dual licensing:
-AGPL for everyone, plus a paid commercial licence for companies that want Vecto in a closed product.
-Possible because all Vecto code is the owner's own. Releases up to and including v0.4.3 stay MIT forever.
+From v0.4.4 on Vecto is **AGPL-3.0-only**, for dual licensing: AGPL for everyone, plus a paid
+commercial licence for companies that want Vecto in a closed product. Possible because all Vecto
+code is the owner's own (copyright Daniel Mitev, public name Daniel Mevit). Releases up to and
+including v0.4.3 stay MIT forever.
 
-To do (one small commit on dev, then merged with the next release):
-- Replace `LICENSE` with the AGPL-3.0 text; SPDX `AGPL-3.0-only` in project metadata.
-- README: licence badge + licence section ("AGPL-3.0; commercial licences available from the author").
-- Site (site/src) and docs/store/LISTING.md: any "MIT" mention.
-- Check `THIRD-PARTY-NOTICES.md` still fits (ImageSharp community licence for the CLI).
-- CHANGELOG entry for the release that switches.
+Done (VEC-44): `LICENSE` = AGPL-3.0 text with a Vecto header; new `NOTICE` (copyright, public
+attribution, AGPL summary, warranty, commercial licensing, trademark); SPDX `AGPL-3.0-only` in
+`Directory.Build.props`; README badge + licence section + contributor relicensing sentence; site
+MIT mentions (the site changelog keeps the historical "MIT" for 0.4.1). The Vecto name and logo
+are not licensed with the code: forks must rename. Contributions may be relicensed by the owner
+(needed for commercial licences), so outside contributions need that agreement.
+
+ImageSharp (CLI only) stays compatible: its Split License grants Apache-2.0 terms to software
+under an open-source licence, and Apache-2.0 code may be combined into an AGPL-3.0 work. A
+closed-source commercial build of the CLI would no longer qualify via "open source" — it then
+needs the Split License's small-company clause (< 1M USD revenue) or a Six Labors commercial
+licence. The app and the engine do not use ImageSharp.

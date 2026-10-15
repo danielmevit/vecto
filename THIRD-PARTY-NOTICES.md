@@ -8,7 +8,7 @@ Copyright (c) Six Labors.
 
 `Vecto.Cli` (the `vecto` CLI) uses the **SixLabors.ImageSharp** library, version 4.1.3,
 loaded from NuGet as a direct package dependency. Vecto is free and open-source software
-(MIT), so ImageSharp is used here under the **Six Labors Split License** on its
+(AGPL-3.0-only from v0.4.4; MIT up to v0.4.3), so ImageSharp is used here under the **Six Labors Split License** on its
 **Apache-2.0 terms** (open-source use). Redistributed CLI binaries must carry this
 licence text.
 

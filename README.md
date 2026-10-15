@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://apps.microsoft.com/detail/9PM61P4NC8J2"><img src="https://img.shields.io/badge/Microsoft%20Store-%247.99-0C8CE9" alt="Get it on the Microsoft Store — $7.99"/></a>
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"/>
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="AGPL-3.0 license"/>
   <img src="https://img.shields.io/badge/platform-Windows%20app%20%C2%B7%20Linux%20%2F%20macOS%20CLI-0C8CE9" alt="Windows app, plus a command-line tool for Linux and macOS"/>
   <img src="https://img.shields.io/badge/.NET-8.0-512BD4" alt=".NET 8"/>
   <img src="https://img.shields.io/badge/dependencies-zero%20(engine)-success" alt="zero-dependency engine"/>
@@ -131,12 +131,23 @@ segmentation editing tools, centerline (stroke) tracing. See [ROADMAP.md](ROADMA
 
 The repo is agent-friendly and human-friendly: start at [`AGENTS.md`](AGENTS.md) →
 [`docs/ai/START_HERE.md`](docs/ai/START_HERE.md). Build must stay at 0 warnings; every
-engine change should pass `vecto bench` before/after. PRs welcome.
+engine change should pass `vecto bench` before/after. PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). By contributing, you agree
+that Daniel Mitev may relicense your contribution, including under commercial licences.
 
 ## License
 
-[MIT](LICENSE) © Daniel Mevit. Engine (`Vecto.Core`) has zero dependencies; the CLI uses
-SixLabors.ImageSharp 3.1.x for image decoding.
+From v0.4.4 on, Vecto is licensed under the [GNU AGPL-3.0-only](LICENSE) — © 2026 Daniel Mitev
+(publicly Daniel Mevit, [@danielmevit](https://github.com/danielmevit)); see [NOTICE](NOTICE).
+Versions up to and including v0.4.3 were released under the MIT License and stay MIT.
+
+Want Vecto in a closed-source or commercial product without the AGPL obligations? Commercial
+licences are available on request — contact Daniel Mevit (@danielmevit).
+
+The Vecto name and logo belong to Daniel Mitev (Daniel Mevit); forks must use a different name
+and logo.
+
+Engine (`Vecto.Core`) has zero dependencies; the CLI uses SixLabors.ImageSharp 4.1.x for image
+decoding (see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).
 
 ---
 

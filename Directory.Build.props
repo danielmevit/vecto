@@ -7,6 +7,8 @@
     <Version>0.4.3</Version>
     <Authors>Daniel Mevit</Authors>
     <Product>Vecto</Product>
+    <!-- v0.4.3 and earlier: MIT. From v0.4.4: AGPL-3.0-only, commercial licences on request (see NOTICE) -->
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
   </PropertyGroup>
   <!-- VEC-24: CLI runs are short (one trace, then exit), so the instrumented PGO tier only costs time:
        hot loops are re-jitted with probes and rarely reach the optimised PGO tier before exit.
