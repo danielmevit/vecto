@@ -65,7 +65,7 @@ public static class Tracer
 
         progress?.Invoke("palette", 0.0);
         var sw = Stopwatch.StartNew();
-        var centers = PaletteBuilder.Build(img, p, ct);
+        var centers = PaletteBuilder.Build(img, p, ct, out var tints);
         long paletteMs = sw.ElapsedMilliseconds;
 
         progress?.Invoke("segmentation", 0.25);
@@ -90,7 +90,7 @@ public static class Tracer
         Segmenter.AbsorbSmallRegions(labels, w, h, minArea, ct);
         var palette = CompactPalette(img, labels, centers.Length);
         if (!p.ExactPalette)
-            palette = MergeSimilarDisplays(img, labels, palette, w, h, minArea, ct);
+            palette = MergeSimilarDisplays(img, labels, palette, tints, w, h, minArea, ct);
         p.NoiseShare = NoiseEstimate.InteriorNoiseShare(img, labels, w, h, ct);
         // The share alone also fires on downscaled text, blurred shadows and dithered gradients;
         // only JPEG ringing fills the 8x8 blocks around edges, so that confirms it
@@ -238,7 +238,8 @@ public static class Tracer
     /// that, so every flat area becomes a mosaic of near-identical regions. Here entries
     /// whose display colours are within <see cref="DisplayMergeThreshold"/> Oklab are
     /// united (smaller into larger), leftover specks are absorbed, and the compact
-    /// palette is recomputed. Exact palettes are verbatim by design and skip this.
+    /// palette is recomputed. Exact palettes are verbatim by design and skip this, and
+    /// entries anchored by two distinct large flat light tints stay apart (PaletteBuilder).
     /// </summary>
     const double DisplayMergeThreshold = 0.05;
 
@@ -274,13 +275,14 @@ public static class Tracer
     }
 
     static List<PaletteEntry> MergeSimilarDisplays(
-        RasterImage img, int[] labels, List<PaletteEntry> palette, int w, int h, int minArea, CancellationToken ct)
+        RasterImage img, int[] labels, List<PaletteEntry> palette, Lab[] tints, int w, int h, int minArea, CancellationToken ct)
     {
         int n = palette.Count;
         if (n < 2) return palette;
         var lab = new Lab[n];
         for (int c = 0; c < n; c++)
             lab[c] = Oklab.FromRgb(palette[c].Color.R, palette[c].Color.G, palette[c].Color.B);
+        var anchor = PaletteBuilder.AnchorTints(lab, tints);
         double t2 = DisplayMergeThreshold * DisplayMergeThreshold;
         var parent = new int[n];
         var size = new long[n];
@@ -291,21 +293,77 @@ public static class Tracer
             return x;
         }
         bool merged = false;
+        var apart = new bool[n];
         for (int i = 0; i < n; i++)
             for (int j = i + 1; j < n; j++)
                 if (Oklab.DistSq(lab[i], lab[j]) <= t2)
                 {
                     int ri = Root(i), rj = Root(j);
                     if (ri == rj) continue;
-                    if (size[ri] >= size[rj]) { parent[rj] = ri; size[ri] += size[rj]; }
-                    else { parent[ri] = rj; size[rj] += size[ri]; }
+                    if (PaletteBuilder.TintsApart(anchor[ri], anchor[rj], tints)) { apart[ri] = apart[rj] = true; continue; }
+                    // a set keeps its heaviest (lowest-index) tint, so no chain of near
+                    // neighbours can unite two distinct tints
+                    int keep = anchor[ri] < 0 ? anchor[rj] : anchor[rj] < 0 ? anchor[ri] : Math.Min(anchor[ri], anchor[rj]);
+                    if (size[ri] >= size[rj]) { parent[rj] = ri; size[ri] += size[rj]; anchor[ri] = keep; }
+                    else { parent[ri] = rj; size[rj] += size[ri]; anchor[rj] = keep; }
                     merged = true;
                 }
-        if (!merged) return palette;
+        // sets an anchor kept apart from a near colour they would otherwise have merged with
+        var kept = new bool[n];
+        bool anyKept = false;
+        for (int c = 0; c < n; c++)
+            if (apart[c]) { kept[Root(c)] = true; anyKept = true; }
+        if (!merged && !anyKept) return palette;
         for (int i = 0; i < labels.Length; i++)
             if (labels[i] >= 0) labels[i] = Root(labels[i]);
+        if (anyKept) AbsorbTintSpecks(labels, kept, w, h, ct);
         Segmenter.AbsorbSmallRegions(labels, w, h, minArea, ct);
         return CompactPalette(img, labels, n);
+    }
+
+    /// <summary>
+    /// The anchor keeps a large flat tint apart, but anti-aliasing pixels along other edges
+    /// that land on the tint colour (pale blue beside an ink outline on white) would keep it
+    /// too, as specks. Components of a kept set under
+    /// <see cref="NoiseEstimate.NoisyMinRegionArea"/> pixels go to the neighbour they share the
+    /// longest border with, as their colour merged away before tints were anchored.
+    /// </summary>
+    static void AbsorbTintSpecks(int[] labels, bool[] kept, int w, int h, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var seg = Segmenter.Components(labels, w, h);
+        int rc = seg.RegionCount;
+        var speck = new bool[rc];
+        for (int r = 0; r < rc; r++)
+            speck[r] = seg.RegionArea[r] < NoiseEstimate.NoisyMinRegionArea && kept[seg.RegionPalette[r]];
+        var border = new Dictionary<(int Speck, int Label), int>();
+        for (int i = 0; i < labels.Length; i++)
+        {
+            int r = seg.RegionId[i];
+            if (r < 0 || !speck[r]) continue;
+            int x = i % w, y = i / w;
+            if (x > 0) Tally(i - 1);
+            if (x < w - 1) Tally(i + 1);
+            if (y > 0) Tally(i - w);
+            if (y < h - 1) Tally(i + w);
+            void Tally(int j)
+            {
+                if (seg.RegionId[j] == r || labels[j] < 0) return;
+                var key = (r, labels[j]);
+                border[key] = border.GetValueOrDefault(key) + 1;
+            }
+        }
+        // longest border wins, ties to the lower label, so the result is order-free
+        var target = new int[rc];
+        Array.Fill(target, -1);
+        var best = new int[rc];
+        foreach (var ((r, l), len) in border)
+            if (len > best[r] || (len == best[r] && l < target[r])) { best[r] = len; target[r] = l; }
+        for (int i = 0; i < labels.Length; i++)
+        {
+            int r = seg.RegionId[i];
+            if (r >= 0 && speck[r] && target[r] >= 0) labels[i] = target[r];
+        }
     }
 
     /// <summary>

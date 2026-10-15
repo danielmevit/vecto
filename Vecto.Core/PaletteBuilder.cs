@@ -10,8 +10,25 @@ internal static class PaletteBuilder
     const int TargetSamples = 120_000;
     const int EdgeChannelDelta = 24;
 
-    public static Lab[] Build(RasterImage img, EffectiveParams p, CancellationToken ct)
+    /// <summary>
+    /// Light tints: Oklab packs the near-white colours tight (cream #fff6e8, white and pale
+    /// blue #f1f6ff are 0.031-0.034 apart), so the merge thresholds (0.055 cluster merge,
+    /// 0.05 display merge) melt distinct pastel fills into one near-white. A large flat
+    /// light fill — one exact colour holding at least <see cref="TintShare"/> of the sampled
+    /// pixels, lightness at least <see cref="TintMinL"/> — is a deliberate colour: two such
+    /// tints at least <see cref="TintApart"/> apart keep their own palette entries. JPEG
+    /// ringing and anti-aliasing never pile that many pixels on one exact colour (and edge
+    /// pixels are not sampled), and dark noise is excluded by the lightness gate: near
+    /// black a few RGB levels already span more than <see cref="TintApart"/>.
+    /// </summary>
+    const double TintShare = 0.005;
+    const int TintMinSamples = 64;
+    const float TintMinL = 0.85f;
+    const double TintApart = 0.025;
+
+    public static Lab[] Build(RasterImage img, EffectiveParams p, CancellationToken ct, out Lab[] tints)
     {
+        tints = Array.Empty<Lab>();
         if (p.ExactPalette)
         {
             var exact = TryExact(img, p.KMeansK);
@@ -19,10 +36,51 @@ internal static class PaletteBuilder
         }
         var samples = CollectSamples(img, p.ExcludeEdgeSamples, ct);
         if (samples.Count == 0) return Array.Empty<Lab>();
+        tints = LightTints(samples);
         var centers = KMeans(samples, Math.Min(p.KMeansK, samples.Count), p.Seed, ct, out var weights);
-        if (p.MergeClusters) centers = MergeClose(centers, weights, p.MergeThreshold);
+        if (p.MergeClusters) centers = MergeClose(centers, weights, p.MergeThreshold, tints);
         return centers;
     }
+
+    /// <summary>Exact light colours that fill a large flat area, heaviest first.</summary>
+    static Lab[] LightTints(List<(Lab Color, long Weight)> samples)
+    {
+        long total = 0;
+        foreach (var s in samples) total += s.Weight;
+        long min = Math.Max(TintMinSamples, (long)(total * TintShare));
+        return samples
+            .Where(s => s.Weight >= min && s.Color.L >= TintMinL)
+            .OrderByDescending(s => s.Weight)
+            .Select(s => s.Color)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Per colour, the index of the heaviest light tint (<paramref name="tints"/> is heaviest
+    /// first) that lies within <see cref="TintApart"/> and nearest to it, or -1.
+    /// </summary>
+    internal static int[] AnchorTints(IReadOnlyList<Lab> colors, Lab[] tints)
+    {
+        var anchor = new int[colors.Count];
+        Array.Fill(anchor, -1);
+        double t2 = TintApart * TintApart;
+        for (int t = tints.Length - 1; t >= 0; t--)
+        {
+            int best = -1;
+            double bd = t2;
+            for (int c = 0; c < colors.Count; c++)
+            {
+                double d = Oklab.DistSq(colors[c], tints[t]);
+                if (d <= bd) { bd = d; best = c; }
+            }
+            if (best >= 0) anchor[best] = t; // heavier tints come later and win
+        }
+        return anchor;
+    }
+
+    /// <summary>Two colours anchored by distinct light tints must not merge.</summary>
+    internal static bool TintsApart(int ta, int tb, Lab[] tints) =>
+        ta >= 0 && tb >= 0 && Oklab.DistSq(tints[ta], tints[tb]) >= TintApart * TintApart;
 
     static Lab[]? TryExact(RasterImage img, int cap)
     {
@@ -185,10 +243,11 @@ internal static class PaletteBuilder
         return centers;
     }
 
-    static Lab[] MergeClose(Lab[] centers, long[] counts, double threshold)
+    static Lab[] MergeClose(Lab[] centers, long[] counts, double threshold, Lab[] tints)
     {
         var labs = centers.ToList();
         var weights = counts.Select(c => (double)Math.Max(c, 1)).ToList();
+        var anchors = AnchorTints(labs, tints).ToList();
         double t2 = threshold * threshold;
         while (labs.Count > 1)
         {
@@ -197,10 +256,14 @@ internal static class PaletteBuilder
             for (int i = 0; i < labs.Count; i++)
                 for (int j = i + 1; j < labs.Count; j++)
                 {
+                    if (TintsApart(anchors[i], anchors[j], tints)) continue;
                     double d = Oklab.DistSq(labs[i], labs[j]);
                     if (d < best) { best = d; bi = i; bj = j; }
                 }
             if (best > t2) break;
+            // the merged cluster keeps the heavier (lower-index) tint anchor
+            if (anchors[bi] < 0 || (anchors[bj] >= 0 && anchors[bj] < anchors[bi])) anchors[bi] = anchors[bj];
+            anchors.RemoveAt(bj);
             double wi = weights[bi], wj = weights[bj], tw = wi + wj;
             labs[bi] = new Lab(
                 (float)((labs[bi].L * wi + labs[bj].L * wj) / tw),
