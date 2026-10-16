@@ -27,7 +27,7 @@
 - **Interface languages:** move every UI text (window, menus, buttons, tips, onboarding, messages, installer/Store
   strings) into translation files; follow the Windows display language, with a language picker in onboarding and
   settings. Same plan as Eqho and Laydown/Vecto, shared word list where possible.
-- Wave 1 languages: **main** — English, German, Spanish, French, Italian, Portuguese, Dutch, Polish, Russian, Ukrainian, Turkish, Japanese, Chinese (Simplified), Korean; **Balkan** — Macedonian, Serbian (Cyrillic + Latin), Croatian, Slovenian, Bulgarian, Albanian, Romanian, Greek (no separate Bosnian: Serbian and Croatian cover it); **Central Europe** — Czech, Slovak. Later waves: as many more as quality allows (owner: "as huge as it can be").
+- Wave 1 languages: **main** — English, German, Spanish, French, Italian, Portuguese, Dutch, Polish, Russian, Ukrainian, Turkish, Japanese, Chinese (Simplified), Korean; **Balkan** — Macedonian, Serbian (Latin only), Croatian, Slovenian, Bulgarian, Albanian, Romanian, Greek (no separate Bosnian: Serbian and Croatian cover it); **Central Europe** — Czech, Slovak. Later waves: as many more as quality allows (owner: "as huge as it can be").
 - Translations by AI workers first, native-speaker review welcome; right-to-left languages only after the layout is
   checked for them. Store listings can be localized per language in Partner Center afterwards.
 
