@@ -89,7 +89,12 @@ Vecto stays in beta: every release is 0.4.x.
   upload (SUBMISSION.md walks every field)
 - ~~Portable Windows build~~ **done 2026-07-19** (`portable.txt` beside the exe keeps
   settings there; ZIP ships it)
-- winget manifest (`winget install vecto`); demo GIF for README/site
+- **winget listing** (owner 2026-10-17, like Eqho's `damt.Eqho`): new-package PR to microsoft/winget-pkgs as
+  `damt.Vecto` (IDs are case-insensitive, so `winget install damt.vecto` works). Needs a public, winget-installable
+  installer: check what `Vecto-<ver>.exe` is (Inno/NSIS installer → silent switches; or ship the ZIP as
+  `zip` + `portable`), validate with `winget validate`, test-install, then submit after the next release. Each
+  later version = a small update PR (can be automated in CI).
+- Demo GIF for README/site
 - Code signing (SmartScreen) — costs money, decide separately
 
 ## Phase 5 — Cross-platform (Linux + macOS)
