@@ -131,3 +131,7 @@ Vecto stays in beta: every release is 0.4.x.
   near-horizontal edges
 - `MinRegionArea` scaling with image resolution; photo-mode color count heuristics
 - Parallelize labeling/k-means further if large photos feel slow
+
+## Later — to iron out (owner 2026-10-17)
+- **Guided first-run tour** (owner 2026-10-17, to iron out later): the onboarding opens as a popup first, then
+  points at the app's main controls one by one ("this is where…") — same approach in Eqho, Vecto and Laydown.
