@@ -162,7 +162,7 @@ public static class Centerline
                 if (!closed) tracer.Extend(pixels, growLen);
                 chains.Add((pixels, closed));
             }
-            foreach (var (pixels, closed, width) in DropCapCrumbs(chains, tracer, widthAt, median))
+            foreach (var (pixels, closed, width) in DropCapCrumbs(chains, tracer, widthAt, median, w))
             {
                 if (width <= 0) continue;
                 var stroke = BuildStroke(pixels, closed, width, ink, p, w, h, skel, inkMask, dtSq);
@@ -181,6 +181,79 @@ public static class Centerline
                 foreach (int i in c.Pixels)
                     labels[i] = paper;
         return strokes;
+    }
+
+    /// <summary>
+    /// Measures every traced chain's stroke width and drops the CAP CRUMBS: short ridge
+    /// fragments a stroke's flat cap leaves beside the true tip (the local-max test keeps
+    /// a little arc across the cap even after bridging and growth). A crumb is an open
+    /// chain, at most <see cref="CrumbMaxLen"/> pixels long, every pixel of which sits
+    /// inside the round cap of a strictly longer chain's tip — the stroke's own cap
+    /// already paints that ink, so emitting the crumb would double-paint the tip and add
+    /// a spurious micro-stroke. That is why the tips are grown before this pass: the
+    /// coverage radius is measured from the grown tip, which reaches the true stroke end.
+    /// Width is the median over degree-2 chain pixels (junction ends and grown tips are
+    /// excluded — their width sample is not the stroke's), falling back to all sampled
+    /// pixels; a chain with no sample at all gets width 0 and is dropped by the caller.
+    /// </summary>
+    static List<(List<int> Pixels, bool Closed, double Width)> DropCapCrumbs(
+        List<(List<int> Pixels, bool Closed)> chains, ChainTracer tracer, double[] widthAt, double median, int w)
+    {
+        var measured = new List<(List<int> Pixels, bool Closed, double Width)>(chains.Count);
+        var samples = new List<double>();
+        foreach (var (pixels, closed) in chains)
+        {
+            samples.Clear();
+            foreach (int q in pixels)
+                if (widthAt[q] > 0 && tracer.Degree(q) == 2) samples.Add(widthAt[q]);
+            if (samples.Count < 2)
+            {
+                samples.Clear();
+                foreach (int q in pixels)
+                    if (widthAt[q] > 0) samples.Add(widthAt[q]);
+            }
+            measured.Add((pixels, closed, samples.Count == 0 ? 0 : Median(samples)));
+        }
+        for (int i = 0; i < measured.Count; i++)
+        {
+            var (pixels, closed, _) = measured[i];
+            if (closed || pixels.Count > CrumbMaxLen(median)) continue;
+            for (int j = 0; j < measured.Count; j++)
+            {
+                if (i == j) continue;
+                var (cover, _, coverWidth) = measured[j];
+                if (cover.Count <= pixels.Count) continue;
+                double r = coverWidth / 2 + CrumbCoverSlack;
+                if (Covered(pixels, cover[0], r, w) || Covered(pixels, cover[^1], r, w))
+                {
+                    measured.RemoveAt(i);
+                    i--;
+                    break;
+                }
+            }
+        }
+        return measured;
+    }
+
+    /// <summary>Longest chain (pixels) that can still be a cap crumb: a cap fragment spans
+    /// about one stroke width; anything longer is a real (short) stroke and stays.</summary>
+    static int CrumbMaxLen(double median) => Math.Max(3, (int)Math.Ceiling(median));
+
+    /// <summary>Slack on the round-cap coverage radius: the fitted tip sits within half a
+    /// pixel of the grown tip pixel, and the crumb's own pixels carry the same slack.</summary>
+    const double CrumbCoverSlack = 1.0;
+
+    /// <summary>True when every crumb pixel's centre lies within <paramref name="r"/> of the
+    /// cover chain's tip pixel — the round cap painted at that tip covers the crumb whole.</summary>
+    static bool Covered(List<int> crumbs, int cap, double r, int w)
+    {
+        double cx = cap % w + 0.5, cy = cap / w + 0.5, r2 = r * r;
+        foreach (int q in crumbs)
+        {
+            double dx = q % w + 0.5 - cx, dy = q / w + 0.5 - cy;
+            if (dx * dx + dy * dy > r2) return false;
+        }
+        return true;
     }
 
     /// <summary>
@@ -296,8 +369,10 @@ public static class Centerline
     /// path instead of a Bezier chain following the scan's pixel wobble.</summary>
     public const double FitWidthFactor = 0.5;
     /// <summary>Clamps on the width-derived tolerance (px): a floor so 1-px strokes keep a
-    /// workable hypothesis, a cap so wide ones cannot drift a full half-width.</summary>
-    public const double FitTolMin = 0.25, FitTolMax = 1.25;
+    /// workable hypothesis, a cap so wide ones cannot drift a full half-width (a scan's
+    /// wobble rides ±1 px on the ridge — the cap must admit it or every real stroke
+    /// falls through to the Bezier fitter).</summary>
+    public const double FitTolMin = 0.25, FitTolMax = 1.5;
     /// <summary>Directions this close to a 45° multiple snap exactly (Scan2CAD-style axis
     /// snap): near-horizontal/vertical/diagonal lines come out at exactly 0/90/45°.</summary>
     public const double CadAngleSnapDeg = 1.5;
@@ -377,12 +452,14 @@ public static class Centerline
 
     /// <summary>
     /// The 2-anchor line for one run between pins, or null when the run is not straight.
-    /// Total-least-squares fit of the run's interior (the vertex beside each pin is
-    /// excluded — smoothing damps it); the direction snaps to a 45° multiple within
-    /// <see cref="CadAngleSnapDeg"/>, and the run counts as straight only when every
-    /// interior point stays within tolerance of the snapped line AND the residuals show no
-    /// bow — a curve's signature. The endpoints are the pins projected onto the line, so
-    /// the emitted chord IS the snapped line: exactly 0/90/45° when it snapped.
+    /// Total-least-squares fit of the run's interior (the two vertices beside each pin are
+    /// excluded — smoothing damps them, and at a flat tip they are cap geometry); the
+    /// direction snaps to a 45° multiple within <see cref="CadAngleSnapDeg"/>, and the run
+    /// counts as straight only when every fitted interior point stays within tolerance of
+    /// the snapped line AND the residuals show no bow — a curve's signature (the bow gate
+    /// sees the full interior, caps included). The endpoints are the pins projected onto
+    /// the line, so the emitted chord IS the snapped line: exactly 0/90/45° when it
+    /// snapped, and a cap hook at a pin cannot drag it off the stroke.
     /// </summary>
     static (Vec2 A, Vec2 B)? StraightRunLine(List<Vec2> pts, bool closed, int a, int b, int n, double tol)
     {
@@ -418,7 +495,16 @@ public static class Centerline
             double s = q.Dot(dir), r = q.Dot(nrm);
             s0 = Math.Min(s0, s);
             s1 = Math.Max(s1, s);
-            worst = Math.Max(worst, Math.Abs(r));
+        }
+        // the residual gate runs on the same trimmed interior the fit used: the two
+        // vertices beside each pin are cap geometry (an edge-hugging hook the ridge leaves
+        // at a flat tip), not the stroke's course — the projected endpoints and the round
+        // cap cover them. The bow gate below still sees every interior vertex, so a
+        // genuinely curved run never passes as a line.
+        foreach (var i in fit)
+        {
+            var q = pts[i] - c;
+            worst = Math.Max(worst, Math.Abs(q.Dot(nrm)));
         }
         if (worst > tol) return null;
         double half = (s1 - s0) / 2, mid = (s0 + s1) / 2;
@@ -818,7 +904,11 @@ public static class Centerline
         /// bridges onward), and only bridges along the chains: the bridge bearing must stay
         /// within <see cref="BridgeMaxAngleDeg"/> of the dead end's outward tangent, so a
         /// stroke's flat tip (whose cap chain ends point back INTO the stroke) never welds
-        /// shut, and parallel strokes that merely pass close stay apart.
+        /// shut, and parallel strokes that merely pass close stay apart. A degree-0 end is a
+        /// junction remnant (the crossing centre is the ridge's local max while the arms die
+        /// around it), so it is never spent: every arm may weld to it in one pass, rebuilding
+        /// the junction the tracer then splits at — otherwise the two arms left over weld to
+        /// each other diagonally around the crossing corner.
         /// Returns the added pixels so their widths can be measured.
         /// </summary>
         public List<int> BridgeGaps(List<int> pixels, double maxDist)
@@ -828,14 +918,16 @@ public static class Centerline
             while (bridged)
             {
                 bridged = false;
-                var ends = new List<int>();
+                var ends = new List<(int P, int Deg)>();
                 foreach (int e in pixels)
-                    if (skel[e] && Degree(e) <= 1) ends.Add(e);
+                    if (skel[e] && Degree(e) <= 1) ends.Add((e, Degree(e)));
+                var endDeg = new Dictionary<int, int>();
+                foreach (var (e, d) in ends) endDeg[e] = d;
                 var pairs = new List<(double D2, int A, int B, List<int> Line)>();
                 for (int i = 0; i < ends.Count; i++)
                     for (int j = i + 1; j < ends.Count; j++)
                     {
-                        int a = ends[i], b = ends[j];
+                        int a = ends[i].P, b = ends[j].P;
                         int dx = b % w - a % w, dy = b / w - a / w;
                         double d2 = (double)dx * dx + dy * dy;
                         if (d2 > maxDist * maxDist || d2 < 4) continue;   // 8-connected ends need no bridge
@@ -853,8 +945,10 @@ public static class Centerline
                         skel[q] = true;
                         added.Add(q);
                     }
-                    used.Add(a);
-                    used.Add(b);
+                    // only a real chain end is spent by a bridge; the degree-0 remnant stays
+                    // available for the remaining arms of its junction
+                    if (endDeg[a] > 0) used.Add(a);
+                    if (endDeg[b] > 0) used.Add(b);
                     bridged = true;
                 }
             }
@@ -907,7 +1001,11 @@ public static class Centerline
         /// short of the ink. On a wobbly stroke the drop is wider (a whole wobble step can
         /// fall out), so the growth limit scales with the image's median stroke width.
         /// Only true dead ends (skeleton degree 1) grow — junction ends keep their
-        /// crossing, and growth stops at the first paper or skeleton pixel.
+        /// crossing. Growth stops at the first paper pixel, the image edge, or a junction
+        /// (skeleton degree ≥ 3); a plain skeleton pixel (degree ≤ 2) is ABSORBED — the U a
+        /// flat cap leaves in the ridge is the stroke's own tip geometry, and absorbing it
+        /// lets the chain grow through to the true stroke end (the cap-crumb pass then drops
+        /// the leftover fragment, covered by the grown tip's round cap).
         /// </summary>
         public void Extend(List<int> chain, int maxGrow)
         {
@@ -928,7 +1026,8 @@ public static class Centerline
                     x += sx; y += sy;
                     if ((uint)x >= (uint)w || (uint)y >= (uint)h) break;
                     int c = y * w + x;
-                    if (comp[c] != id || skel[c]) break;
+                    if (comp[c] != id) break;
+                    if (skel[c] && Degree(c) >= 3) break;
                     grown.Add(c);
                 }
                 if (atEnd) chain.AddRange(grown);
