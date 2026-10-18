@@ -23,9 +23,15 @@ internal static class ImageInterop
     public static BitmapSource ToBitmapSource(RasterImage raster)
     {
         int w = raster.Width, h = raster.Height;
-        var bgra = new byte[raster.Pixels.Length];
+        var px = raster.Pixels;
+        var bgra = new byte[px.Length];
         for (int i = 0; i < bgra.Length; i += 4)
-            (bgra[i], bgra[i + 2]) = (raster.Pixels[i + 2], raster.Pixels[i]);
+        {
+            bgra[i] = px[i + 2];
+            bgra[i + 1] = px[i + 1];
+            bgra[i + 2] = px[i];
+            bgra[i + 3] = px[i + 3];
+        }
         var bmp = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, bgra, w * 4);
         bmp.Freeze();
         return bmp;

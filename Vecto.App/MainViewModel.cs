@@ -194,8 +194,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
         try
         {
             var page = await Task.Run(() => PdfImport.LoadFirstPage(path));
-            var bmp = ImageInterop.ToBitmapSource(page.Image);
-            LoadBitmap(bmp, path);
+            // display-only conversion: the pipeline consumes the rasterized page
+            // directly, never round-tripped through WPF pixel formats
+            AdoptLoaded(page.Image, ImageInterop.ToBitmapSource(page.Image), path);
             _sourceNote = page.PageCount > 1
                 ? $"\nPDF: page 1 of {page.PageCount} — the CLI can select other pages."
                 : "";
@@ -211,10 +212,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // convert first: if this throws, the previous image, file name and trace result stay untouched
         var raster = ImageInterop.ToRaster(bmp);
         if (bmp.CanFreeze) bmp.Freeze();
+        AdoptLoaded(raster, bmp, path);
+    }
+
+    /// <summary>Shared adopt path; the pipeline always consumes the raster directly.</summary>
+    void AdoptLoaded(RasterImage raster, BitmapSource display, string? path)
+    {
         _sourcePath = path;
         _sourceNote = null;
         _raster = raster;
-        SourceBitmap = bmp;
+        SourceBitmap = display;
         Raise(nameof(WindowTitle));
         FitRequested?.Invoke();
         Retrace(immediate: true);
