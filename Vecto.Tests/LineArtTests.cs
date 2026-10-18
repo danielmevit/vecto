@@ -83,17 +83,22 @@ public class LineArtTests
     }
 
     [Fact]
-    public void LineArt_OnePixelDiagonal_TracesAsSingleInkRegion()
+    public void LineArt_OnePixelDiagonal_TracesAsSingleStrokedPath()
     {
         // the VEC-07 repro: a 1-px 45-degree line used to vanish (4-connected labelling split
-        // it into 1-2 px runs that small-region absorption deleted)
+        // it into 1-2 px runs that small-region absorption deleted). VEC-50: with the
+        // centerline stage on, the bridged diagonal is one stroked path, not a filled ribbon
         var img = Make(64, 64, (x, y) => x >= 8 && x <= 56 && y == x - 8 ? Black : White);
         var res = Tracer.Trace(img, new TraceOptions { Style = ImageStyle.LineArt });
-        Assert.Equal(2, res.Document.Regions.Count);   // paper + the stroke
         Assert.Equal(2, res.Document.Palette.Count);   // pure ink/paper palette
-        var dark = res.Document.Regions.Where(r => res.Document.Palette[r.PaletteIndex].Color.R < 128).ToList();
-        Assert.Single(dark);
-        Assert.True(dark[0].Area >= 49, $"stroke region area {dark[0].Area} lost pixels");
+        Assert.Single(res.Document.Regions);           // paper only — the ink went to a stroke
+        Assert.Single(res.Document.Strokes);
+        var stroke = res.Document.Strokes[0];
+        Assert.False(stroke.Closed);
+        Assert.True(stroke.Width is >= 0.75 and <= 2.5, $"stroke width {stroke.Width} off");
+        double len = 0;
+        foreach (var seg in stroke.Segments) len += Math.Sqrt(seg.P3.DistSq(seg.P0));
+        Assert.True(len >= 60, $"stroke length {len:0.0} lost pixels");   // true diagonal ≈ 67.9
     }
 
     [Fact]

@@ -29,6 +29,18 @@ public static class SvgWriter
             foreach (var loop in region.Loops) AppendLoop(sb, loop);
             sb.Append("\" />\n");
         }
+        foreach (var stroke in doc.Strokes)
+        {
+            var c = doc.Palette[stroke.PaletteIndex].Color;
+            sb.Append("<path fill=\"none\" stroke=\"#")
+              .Append(c.R.ToString("x2", CultureInfo.InvariantCulture))
+              .Append(c.G.ToString("x2", CultureInfo.InvariantCulture))
+              .Append(c.B.ToString("x2", CultureInfo.InvariantCulture))
+              .Append("\" stroke-width=\"").Append(F(stroke.Width))
+              .Append("\" stroke-linecap=\"round\" stroke-linejoin=\"round\" opacity=\"1.00\" d=\"");
+            AppendStroke(sb, stroke);
+            sb.Append("\" />\n");
+        }
         sb.Append("</svg>\n");
         return sb.ToString();
     }
@@ -48,6 +60,24 @@ public static class SvgWriter
                   .Append(F(seg.P3.X)).Append(' ').Append(F(seg.P3.Y));
         }
         sb.Append(" Z");
+    }
+
+    /// <summary>Stroked centerline path: same command grammar, but Z only closes true rings —
+    /// an open stroke must not gain a closing chord.</summary>
+    static void AppendStroke(StringBuilder sb, StrokePath stroke)
+    {
+        sb.Append(" M ").Append(F(stroke.Segments[0].P0.X)).Append(' ').Append(F(stroke.Segments[0].P0.Y));
+        foreach (var seg in stroke.Segments)
+        {
+            if (seg.IsLine())
+                sb.Append(" L ").Append(F(seg.P3.X)).Append(' ').Append(F(seg.P3.Y));
+            else
+                sb.Append(" C ")
+                  .Append(F(seg.P1.X)).Append(' ').Append(F(seg.P1.Y)).Append(' ')
+                  .Append(F(seg.P2.X)).Append(' ').Append(F(seg.P2.Y)).Append(' ')
+                  .Append(F(seg.P3.X)).Append(' ').Append(F(seg.P3.Y));
+        }
+        if (stroke.Closed) sb.Append(" Z");
     }
 
     static string F(double v) => v.ToString("0.00", CultureInfo.InvariantCulture);
