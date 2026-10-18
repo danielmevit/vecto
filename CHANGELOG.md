@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **PDF input.** `vecto trace drawing.pdf` now rasterizes PDF pages in memory and traces them like
+  any scan — no export to PNG first. Pages render at 600 DPI by default (`--pdf-dpi`) with image
+  smoothing off so line art stays crisp, `--pages 1,3-5` selects pages (one SVG per page for
+  multi-page files), and oversized pages are rejected with a clear message instead of exhausting
+  memory. The `samples` command now also writes `cad.pdf`, a realistic scanned-drawing PDF fixture.
+  PDF rendering uses PDFium via the PDFtoImage library; Vecto.Core remains dependency-free.
 - **New: Line art mode for scans and CAD drawings.** Scanned engineering drawings now have their own
   tracing style: pick "Line art (scans, CAD)" in the app or `--style lineart` in the CLI, and Vecto
   first cleans the scan — adaptive thresholding copes with uneven illumination, blur and noise to
