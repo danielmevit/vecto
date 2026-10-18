@@ -4,6 +4,11 @@
     <ProjectReference Include="..\Vecto.Core\Vecto.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- PDF input: same pinned PDFtoImage as the CLI (wraps PDFium, renders to SKBitmap in memory) -->
+    <PackageReference Include="PDFtoImage" Version="5.4.0" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>

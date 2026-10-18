@@ -18,4 +18,22 @@ internal static class ImageInterop
             (bgra[i], bgra[i + 2]) = (bgra[i + 2], bgra[i]);
         return new RasterImage(w, h, bgra);
     }
+
+    /// <summary>RasterImage (straight RGBA8888) → frozen Bgra32 BitmapSource for display.</summary>
+    public static BitmapSource ToBitmapSource(RasterImage raster)
+    {
+        int w = raster.Width, h = raster.Height;
+        var px = raster.Pixels;
+        var bgra = new byte[px.Length];
+        for (int i = 0; i < bgra.Length; i += 4)
+        {
+            bgra[i] = px[i + 2];
+            bgra[i + 1] = px[i + 1];
+            bgra[i + 2] = px[i];
+            bgra[i + 3] = px[i + 3];
+        }
+        var bmp = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, bgra, w * 4);
+        bmp.Freeze();
+        return bmp;
+    }
 }
