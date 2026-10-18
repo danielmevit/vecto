@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **PDF export.** Traced drawings can now be saved as true vector PDFs — real paths, not a picture
+  inside a PDF. Use `vecto trace scan.pdf -o out.pdf` in the CLI (any `-o` path ending in `.pdf`) or
+  the new **Export PDF…** button in the app. Pages come out at the traced size (1 px = 1 pt), holes
+  and all, and the file is byte-for-byte identical every time you export the same trace. As before,
+  the default output is SVG; nothing about SVG export has changed.
 - **PDF input.** `vecto trace drawing.pdf` now rasterizes PDF pages in memory and traces them like
   any scan — no export to PNG first. Pages render at 600 DPI by default (`--pdf-dpi`) with image
   smoothing off so line art stays crisp, `--pages 1,3-5` selects pages (one SVG per page for
