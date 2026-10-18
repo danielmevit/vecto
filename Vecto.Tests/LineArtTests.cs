@@ -48,9 +48,8 @@ public class LineArtTests
     [Fact]
     public void Sauvola_GradientLitPage_SeparatesInkFromPaper()
     {
-        // faint ink (90) under a 1.0 -> 0.45 illumination gradient: ink on the bright side is
-        // DARKER than nothing... paper on the dark side (112) is darker than bright-side ink
-        // would be without local adaptation — a global threshold cannot separate this page
+        // Faint ink (90) under a strong 1.0 -> 0.45 illumination gradient: Sauvola classifies
+        // ink vs paper correctly across the page with a locally adapted threshold.
         const int w = 160, h = 120;
         var img = Make(w, h, (x, y) =>
         {
