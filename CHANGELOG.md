@@ -1,5 +1,16 @@
 # Changelog — Vecto
 
+## Unreleased
+
+- **New: Line art mode for scans and CAD drawings.** Scanned engineering drawings now have their own
+  tracing style: pick "Line art (scans, CAD)" in the app or `--style lineart` in the CLI, and Vecto
+  first cleans the scan — adaptive thresholding copes with uneven illumination, blur and noise to
+  recover crisp pure-black strokes on white — then traces the result as an exact two-colour vector.
+  Diagonal strokes that touch only corner-to-corner are mended so thin lines survive as single shapes
+  instead of vanishing or doubling, and scan speckles are absorbed automatically. On a synthetic CAD
+  benchmark the trace matches the clean original drawing at 0.97 recall / 0.97 precision, and every
+  other style produces byte-identical output as before.
+
 ## v0.4.4 — 2026-10-15
 
 New app icon, friendlier tips, pastel colours kept, and a new licence: Vecto is AGPL-3.0 from this version
