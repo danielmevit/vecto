@@ -26,6 +26,10 @@ public sealed class StrokePath
 /// else — glyphs, wide bars, hatching-scale blobs — keeps the filled-region treatment, and the
 /// pixels of centerline components are relabelled to paper so the planar partition still tiles
 /// the canvas exactly (the strokes paint on top; see docs/ai/research/2026-10-12-cad-mode-research.md).
+/// VEC-52 (stage 3) regularizes the chains into CAD primitives: corner-split runs become exact
+/// 2-anchor lines with 0/90/45° axis snapping, and circular strokes become exact arcs. A
+/// junction pass then welds the collinear pieces a crossing or a scan gap split off one
+/// straight stroke, and snaps line endpoints to the exact line-line intersections.
 /// </summary>
 public static class Centerline
 {
@@ -41,8 +45,14 @@ public static class Centerline
     /// <summary>…and sit in a row of at least this many same-size peers (Fletcher–Kasturi text rows).</summary>
     public const int TextPeerMin = 4;
     /// <summary>Maximum gap the ridge bridge reconnects: at staircase transitions the DT
-    /// local-max ridge drops 1–2 pixels, so rings shatter into arcs at their octants.</summary>
-    public const double BridgeDist = 3.5;
+    /// local-max ridge drops 1–2 pixels, so rings shatter into arcs at their octants, and a
+    /// wobbly scan line's ridge breaks every few pixels (VEC-52). The bridge's direction
+    /// guard (<see cref="BridgeMaxAngleDeg"/>) is what keeps the larger reach safe.</summary>
+    public const double BridgeDist = 4.5;
+    /// <summary>Largest angle (deg) between a ridge bridge and the dead end's outward chain
+    /// direction: bridges continue strokes, they do not weld caps shut or jump between
+    /// strokes that merely pass close by.</summary>
+    public const double BridgeMaxAngleDeg = 45.0;
 
     /// <summary>Master switch for the centerline stage: off → every LineArt component keeps
     /// today's filled treatment (the VEC-50 escape hatch).</summary>
@@ -129,6 +139,7 @@ public static class Centerline
         MarkTextRows(comps, median);
 
         int pruneLen = Math.Max(2, (int)Math.Ceiling(2 * median));
+        int growLen = Math.Max(4, (int)Math.Ceiling(median));
         var strokes = new List<StrokePath>();
         foreach (var c in comps)
         {
@@ -144,20 +155,19 @@ public static class Centerline
                 if (Twin(skel, inkMask, dtSq, q % w, q / w, q, w, h) >= 0) width += 1;
                 widthAt[q] = width;
             }
+            // trace every chain first and grow the dead ends into the ink the ridge
+            // dropped — the cap-crumb pass needs the grown tips to measure coverage
+            var chains = new List<(List<int> Pixels, bool Closed)>();
             foreach (var (pixels, closed) in tracer.Trace(c.Pixels))
             {
                 if (pixels.Count < 2) continue;
-                if (!closed) tracer.Extend(pixels);
-                var widths = new List<double>();
-                foreach (int q in pixels)
-                    if (tracer.Degree(q) == 2) widths.Add(widthAt[q]);
-                if (widths.Count < 2)
-                {
-                    widths.Clear();
-                    foreach (int q in pixels) widths.Add(widthAt[q]);
-                }
-                if (widths.Count == 0) continue;
-                var stroke = BuildStroke(pixels, closed, Median(widths), ink, p, w, h, skel, inkMask, dtSq);
+                if (!closed) tracer.Extend(pixels, growLen);
+                chains.Add((pixels, closed));
+            }
+            foreach (var (pixels, closed, width) in DropCapCrumbs(chains, tracer, widthAt, median, w))
+            {
+                if (width <= 0) continue;
+                var stroke = BuildStroke(pixels, closed, width, ink, p, w, h, skel, inkMask, dtSq);
                 if (stroke != null)
                 {
                     strokes.Add(stroke);
@@ -172,7 +182,85 @@ public static class Centerline
             if (c.Centerline && c.Emitted)
                 foreach (int i in c.Pixels)
                     labels[i] = paper;
+        // stage 3 junction pass: weld collinear pieces split by junctions or scan gaps,
+        // then land every line endpoint that ends against another line on the exact
+        // intersection — the strokes a CAD user sees cross and meet cleanly
+        MergeCollinearAcrossJunctions(strokes);
+        SnapEndsToIntersections(strokes);
         return strokes;
+    }
+
+    /// <summary>
+    /// Measures every traced chain's stroke width and drops the CAP CRUMBS: short ridge
+    /// fragments a stroke's flat cap leaves beside the true tip (the local-max test keeps
+    /// a little arc across the cap even after bridging and growth). A crumb is an open
+    /// chain, at most <see cref="CrumbMaxLen"/> pixels long, every pixel of which sits
+    /// inside the round cap of a strictly longer chain's tip — the stroke's own cap
+    /// already paints that ink, so emitting the crumb would double-paint the tip and add
+    /// a spurious micro-stroke. That is why the tips are grown before this pass: the
+    /// coverage radius is measured from the grown tip, which reaches the true stroke end.
+    /// Width is the median over degree-2 chain pixels (junction ends and grown tips are
+    /// excluded — their width sample is not the stroke's), falling back to all sampled
+    /// pixels; a chain with no sample at all gets width 0 and is dropped by the caller.
+    /// </summary>
+    static List<(List<int> Pixels, bool Closed, double Width)> DropCapCrumbs(
+        List<(List<int> Pixels, bool Closed)> chains, ChainTracer tracer, double[] widthAt, double median, int w)
+    {
+        var measured = new List<(List<int> Pixels, bool Closed, double Width)>(chains.Count);
+        var samples = new List<double>();
+        foreach (var (pixels, closed) in chains)
+        {
+            samples.Clear();
+            foreach (int q in pixels)
+                if (widthAt[q] > 0 && tracer.Degree(q) == 2) samples.Add(widthAt[q]);
+            if (samples.Count < 2)
+            {
+                samples.Clear();
+                foreach (int q in pixels)
+                    if (widthAt[q] > 0) samples.Add(widthAt[q]);
+            }
+            measured.Add((pixels, closed, samples.Count == 0 ? 0 : Median(samples)));
+        }
+        for (int i = 0; i < measured.Count; i++)
+        {
+            var (pixels, closed, _) = measured[i];
+            if (closed || pixels.Count > CrumbMaxLen(median)) continue;
+            for (int j = 0; j < measured.Count; j++)
+            {
+                if (i == j) continue;
+                var (cover, _, coverWidth) = measured[j];
+                if (cover.Count <= pixels.Count) continue;
+                double r = coverWidth / 2 + CrumbCoverSlack;
+                if (Covered(pixels, cover[0], r, w) || Covered(pixels, cover[^1], r, w))
+                {
+                    measured.RemoveAt(i);
+                    i--;
+                    break;
+                }
+            }
+        }
+        return measured;
+    }
+
+    /// <summary>Longest chain (pixels) that can still be a cap crumb: a cap fragment spans
+    /// about one stroke width; anything longer is a real (short) stroke and stays.</summary>
+    static int CrumbMaxLen(double median) => Math.Max(3, (int)Math.Ceiling(median));
+
+    /// <summary>Slack on the round-cap coverage radius: the fitted tip sits within half a
+    /// pixel of the grown tip pixel, and the crumb's own pixels carry the same slack.</summary>
+    const double CrumbCoverSlack = 1.0;
+
+    /// <summary>True when every crumb pixel's centre lies within <paramref name="r"/> of the
+    /// cover chain's tip pixel — the round cap painted at that tip covers the crumb whole.</summary>
+    static bool Covered(List<int> crumbs, int cap, double r, int w)
+    {
+        double cx = cap % w + 0.5, cy = cap / w + 0.5, r2 = r * r;
+        foreach (int q in crumbs)
+        {
+            double dx = q % w + 0.5 - cx, dy = q / w + 0.5 - cy;
+            if (dx * dx + dy * dy > r2) return false;
+        }
+        return true;
     }
 
     /// <summary>
@@ -247,7 +335,7 @@ public static class Centerline
                 var poly = CornerPolygon.OptimalPolygon(pts, closed);
                 var corners = CornerPolygon.Corners(pts, closed, poly, p.CornerThresholdDeg);
                 ChainGeometry.SmoothInPlace(pts, closed, corners, 2, 0.5, 0.35);
-                segs = BezierFitter.FitChain(pts, closed, corners, StrokeFitTolSq(p));
+                segs = FitCadPrimitives(pts, closed, corners, width, p);
             }
             catch (InvalidOperationException)
             {
@@ -278,6 +366,343 @@ public static class Centerline
     const double StrokeFitFactor = 0.16;
 
     static double StrokeFitTolSq(EffectiveParams p) => Math.Max(0.01, p.FitToleranceSq * StrokeFitFactor);
+
+    // ---- VEC-52 stage 3: CAD regularization ----
+
+    /// <summary>Primitive hypothesis tolerance: this × the chain's stroke width. A
+    /// centerline that drifts less than half its width still paints the same ink (the
+    /// stroke is painted <see cref="StrokePath.Width"/> wide), so the simplest primitive
+    /// that explains the chain within it wins — a straight ink line becomes ONE 2-anchor
+    /// path instead of a Bezier chain following the scan's pixel wobble.</summary>
+    public const double FitWidthFactor = 0.5;
+    /// <summary>Clamps on the width-derived tolerance (px): a floor so 1-px strokes keep a
+    /// workable hypothesis, a cap so wide ones cannot drift a full half-width (a scan's
+    /// wobble rides ±1 px on the ridge — the cap must admit it or every real stroke
+    /// falls through to the Bezier fitter).</summary>
+    public const double FitTolMin = 0.25, FitTolMax = 1.5;
+    /// <summary>Directions this close to a 45° multiple snap exactly (Scan2CAD-style axis
+    /// snap): near-horizontal/vertical/diagonal lines come out at exactly 0/90/45°.</summary>
+    public const double CadAngleSnapDeg = 1.5;
+    /// <summary>Largest bow (quadratic residual trend, px) a straight run may have; above
+    /// it the run is an arc, not a noisy line (same convention as
+    /// <see cref="ChainGeometry.StraightRunMaxSag"/>).</summary>
+    public const double StraightRunMaxSag = 0.3;
+    /// <summary>Fewest interior points a run between pins needs before it can be claimed
+    /// straight (cf. <see cref="ChainGeometry.StraightRunMinPoints"/>, which boundary
+    /// chains need because their noise is JPEG ringing, not scan wobble).</summary>
+    public const int StraightRunMinPoints = 4;
+
+    static double LineTol(double width) => Math.Clamp(FitWidthFactor * width, FitTolMin, FitTolMax);
+
+    /// <summary>Largest gap (px) between the facing endpoints of two collinear pieces the
+    /// junction weld still bridges: a crossing's opposite arms share the junction pixel
+    /// (gap ≈ 0), and a scan's broken line leaves a few paper pixels between the pieces —
+    /// the same reach the ridge bridge grants inside one component (<see cref="BridgeDist"/>).</summary>
+    public const double JunctionMergeGap = 4.5;
+    /// <summary>Largest direction mismatch (deg) between the end pieces of a weldable pair:
+    /// two pieces of one straight stroke fit slightly different TLS directions across a
+    /// scan gap, but a stroke that merely ENDS beside another one points somewhere else.</summary>
+    public const double JunctionMergeAngleDeg = 15.0;
+
+    /// <summary>
+    /// Junction pass, first half: weld collinear pieces of one straight stroke back
+    /// together across the junctions and scan gaps that split them. A crossing cuts every
+    /// stroke it crosses into chains; when two facing pieces are collinear — each facing
+    /// endpoint sits on the other piece's line within the width tolerance, and the pieces
+    /// point the same way — they are ONE stroke, and the concatenated segments collapse
+    /// through <see cref="BezierFitter.MergeCollinearLines"/> into a single 2-anchor line
+    /// spanning both (the seam vertex rides the merged chord, gap included). Deterministic:
+    /// pairs scan in stroke order and the scan restarts after each weld.
+    /// </summary>
+    static void MergeCollinearAcrossJunctions(List<StrokePath> strokes)
+    {
+        double gapSq = JunctionMergeGap * JunctionMergeGap;
+        double minDot = DetMath.Cos(JunctionMergeAngleDeg * Math.PI / 180.0);
+        bool welded = true;
+        while (welded)
+        {
+            welded = false;
+            for (int i = 0; i < strokes.Count && !welded; i++)
+            {
+                var a = strokes[i];
+                if (a.Closed) continue;
+                for (int j = i + 1; j < strokes.Count && !welded; j++)
+                {
+                    var b = strokes[j];
+                    if (b.Closed) continue;
+                    if (Math.Abs(a.Width - b.Width) > Math.Max(1.0, 0.3 * Math.Min(a.Width, b.Width))) continue;
+                    var merged = Weld(a, b);
+                    if (merged == null) continue;
+                    strokes[i] = new StrokePath
+                    {
+                        PaletteIndex = a.PaletteIndex,
+                        Width = Math.Max(a.Width, b.Width),
+                        Closed = false,
+                        Segments = merged,
+                    };
+                    strokes.RemoveAt(j);
+                    welded = true;
+                }
+            }
+        }
+
+        List<CubicBezier>? Weld(StrokePath a, StrokePath b)
+        {
+            double tol = LineTol((a.Width + b.Width) / 2);
+            double tolSq = tol * tol;
+            for (int ra = 0; ra < 2; ra++)
+                for (int rb = 0; rb < 2; rb++)
+                {
+                    var x = ra == 1 ? ReversedSegments(a.Segments) : a.Segments;
+                    var y = rb == 1 ? ReversedSegments(b.Segments) : b.Segments;
+                    var xe = x[^1];
+                    var ye = y[0];
+                    if (!xe.IsLine(0.05) || !ye.IsLine(0.05)) continue;
+                    if (xe.P3.DistSq(ye.P0) > gapSq) continue;
+                    var dx = (xe.P3 - xe.P0).Normalized();
+                    var dy = (ye.P3 - ye.P0).Normalized();
+                    if (dx.Dot(dy) < minDot) continue;
+                    if (PerpDistSqToLine(ye.P0, xe.P0, xe.P3) > tolSq) continue;
+                    if (PerpDistSqToLine(xe.P3, ye.P0, ye.P3) > tolSq) continue;
+                    var concat = new List<CubicBezier>(x.Count + y.Count);
+                    concat.AddRange(x);
+                    concat.AddRange(y);
+                    int before = concat.Count;
+                    BezierFitter.MergeCollinearLines(concat, false, tolSq);
+                    if (concat.Count >= before) continue;
+                    return concat;
+                }
+            return null;
+        }
+    }
+
+    static List<CubicBezier> ReversedSegments(List<CubicBezier> segs)
+    {
+        var r = new List<CubicBezier>(segs.Count);
+        for (int i = segs.Count - 1; i >= 0; i--) r.Add(segs[i].Reversed());
+        return r;
+    }
+
+    /// <summary>Squared perpendicular distance from <paramref name="p"/> to the infinite
+    /// line through <paramref name="a"/> and <paramref name="b"/>.</summary>
+    static double PerpDistSqToLine(Vec2 p, Vec2 a, Vec2 b)
+    {
+        var ab = b - a;
+        double len2 = ab.LengthSq;
+        if (len2 < 1e-12) return p.DistSq(a);
+        double t = (p - a).Dot(ab) / len2;
+        return p.DistSq(a + ab * t);
+    }
+
+    /// <summary>
+    /// Junction pass, second half: a straight stroke that ends against another straight
+    /// stroke moves its endpoint to the exact intersection of the two fitted lines — a T's
+    /// stem lands precisely on the bar it ends against, and the pieces of a crossing that
+    /// did not weld (curved or too-short arms) converge on one shared point instead of each
+    /// stopping on its own junction pixel. Only straight end pieces move (a curve's
+    /// endpoint IS the junction pixel), the intersection must lie on the target stroke, and
+    /// the jump is capped at the width tolerance: anything farther would leave the ink.
+    /// </summary>
+    static void SnapEndsToIntersections(List<StrokePath> strokes)
+    {
+        var lines = new List<(Vec2 A, Vec2 Dir, double Len, int Owner)>();
+        for (int s = 0; s < strokes.Count; s++)
+            foreach (var g in strokes[s].Segments)
+            {
+                if (!g.IsLine(0.05)) continue;
+                var d = g.P3 - g.P0;
+                double len = d.Length;
+                if (len < 2) continue;
+                lines.Add((g.P0, d * (1.0 / len), len, s));
+            }
+        for (int s = 0; s < strokes.Count; s++)
+        {
+            var stroke = strokes[s];
+            if (stroke.Closed) continue;
+            double tol = LineTol(stroke.Width);
+            SnapEnd(head: true);
+            SnapEnd(head: false);
+
+            void SnapEnd(bool head)
+            {
+                var seg = stroke.Segments[head ? 0 : stroke.Segments.Count - 1];
+                if (!seg.IsLine(0.05)) return;
+                var p = head ? seg.P0 : seg.P3;
+                var inner = head ? seg.P3 : seg.P0;
+                var dir = (inner - p).Normalized();
+                if (dir.LengthSq < 0.5) return;
+                bool found = false;
+                var best = p;
+                double bestD2 = tol * tol;
+                foreach (var (a, tdir, len, owner) in lines)
+                {
+                    if (owner == s) continue;
+                    double cross = dir.X * tdir.Y - dir.Y * tdir.X;
+                    if (Math.Abs(cross) < 1e-9) continue;
+                    var dpa = a - p;
+                    double u = (dpa.X * tdir.Y - tdir.X * dpa.Y) / cross;
+                    double v = (dpa.X * dir.Y - dir.X * dpa.Y) / cross;
+                    if (v < -tol || v > len + tol || u < -tol) continue;
+                    var q = p + dir * u;
+                    double d2 = q.DistSq(p);
+                    if (d2 > bestD2) continue;
+                    bestD2 = d2;
+                    best = q;
+                    found = true;
+                }
+                if (found)
+                    stroke.Segments[head ? 0 : stroke.Segments.Count - 1] =
+                        head ? CubicBezier.Line(best, inner) : CubicBezier.Line(inner, best);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Stage 3 of the CAD mode: the corner-split chain becomes CLEAN primitives. Chain
+    /// splitting reuses the corner machinery — <see cref="CornerPolygon.Corners"/> at the
+    /// style's <see cref="EffectiveParams.CornerThresholdDeg"/> (45° turn between
+    /// optimal-polygon edges, the same convention the boundary pipeline resolves for
+    /// LineArt), so high-curvature points are segment boundaries with sharp corners.
+    /// Corners are then relocated to the intersection of their flank lines with
+    /// <see cref="CadAngleSnapDeg"/> snapping — the same machinery region edges use — so
+    /// axis corners land exactly on both lines. Each run between pins is tested against a
+    /// total-least-squares line at the width-derived tolerance: accepted runs emit ONE
+    /// 2-anchor path (exactly axis-aligned when snapped); anything else goes to the Bezier
+    /// fitter at the same tolerance, whose simplest-model-first order gives circular
+    /// strokes the Kåsa arc hypothesis — exact arcs and whole circles.
+    /// </summary>
+    static List<CubicBezier> FitCadPrimitives(List<Vec2> pts, bool closed, List<int> corners, double width, EffectiveParams p)
+    {
+        // a corner may leave its pin by at most the line tolerance: centerline strokes are
+        // thin, and a corner pushed off the ink paints outside the scan
+        ChainGeometry.RelocateCorners(pts, closed, corners, Math.Min(p.CornerRelocateMaxShift, LineTol(width)), CadAngleSnapDeg);
+        double tol = LineTol(width);
+        double tolSq = Math.Max(StrokeFitTolSq(p), tol * tol);
+        int n = closed ? pts.Count - 1 : pts.Count;
+        var pins = corners.Distinct().OrderBy(i => i).ToList();
+        if (!closed)
+        {
+            pins.Insert(0, 0);
+            pins.Add(n - 1);
+            pins = pins.Distinct().OrderBy(i => i).ToList();
+        }
+        // no corner splits the chain: the whole thing is one hypothesis — a straight stroke
+        // becomes one line, anything else goes to the fitter (rings land on its arc path)
+        if (pins.Count < 2)
+            return BezierFitter.FitChain(pts, closed, [], tolSq);
+        // a closed ring with a single corner is still one cyclic run — keep the wrap-around
+        // tangent the closed fitter fits at the seam
+        if (closed && pins.Count == 1)
+            return BezierFitter.FitChain(pts, closed, [], tolSq);
+
+        var segs = new List<CubicBezier>();
+        int runs = closed ? pins.Count : pins.Count - 1;
+        for (int k = 0; k < runs; k++)
+        {
+            int a = pins[k];
+            int b = k + 1 < pins.Count ? pins[k + 1] : pins[0] + n;
+            if (b - a < 2)
+            {
+                segs.Add(CubicBezier.Line(pts[Wrap(a)], pts[Wrap(b)]));
+                continue;
+            }
+            if (StraightRunLine(pts, closed, a, b, n, tol) is { } line)
+            {
+                segs.Add(CubicBezier.Line(line.A, line.B));
+                continue;
+            }
+            var sub = new List<Vec2>(b - a + 1);
+            for (int i = a; i <= b; i++) sub.Add(pts[Wrap(i)]);
+            segs.AddRange(BezierFitter.FitChain(sub, false, [], tolSq));
+        }
+        return segs;
+
+        int Wrap(int i) => closed ? ((i % n) + n) % n : i;
+    }
+
+    /// <summary>
+    /// The 2-anchor line for one run between pins, or null when the run is not straight.
+    /// Total-least-squares fit of the run's interior (the two vertices beside each pin are
+    /// excluded — smoothing damps them, and at a flat tip they are cap geometry); the
+    /// direction snaps to a 45° multiple within <see cref="CadAngleSnapDeg"/>, and the run
+    /// counts as straight only when every fitted interior point stays within tolerance of
+    /// the snapped line AND the residuals show no bow — a curve's signature (the bow gate
+    /// sees the full interior, caps included). The endpoints are the pins projected onto
+    /// the line, so the emitted chord IS the snapped line: exactly 0/90/45° when it
+    /// snapped, and a cap hook at a pin cannot drag it off the stroke.
+    /// </summary>
+    static (Vec2 A, Vec2 B)? StraightRunLine(List<Vec2> pts, bool closed, int a, int b, int n, double tol)
+    {
+        var idx = new List<int>();
+        for (int i = a + 1; i < b; i++) idx.Add(closed ? i % n : i);
+        if (idx.Count < StraightRunMinPoints) return null;
+        var fit = idx.Count >= 6 ? idx.GetRange(1, idx.Count - 2) : idx;
+        double mx = 0, my = 0;
+        foreach (var i in fit) { mx += pts[i].X; my += pts[i].Y; }
+        mx /= fit.Count;
+        my /= fit.Count;
+        double cxx = 0, cxy = 0, cyy = 0;
+        foreach (var i in fit)
+        {
+            double dx = pts[i].X - mx, dy = pts[i].Y - my;
+            cxx += dx * dx;
+            cxy += dx * dy;
+            cyy += dy * dy;
+        }
+        if (cxx + cyy < 1e-12) return null;
+        double theta = 0.5 * DetMath.Atan2(2 * cxy, cxx - cyy);
+        double deg = theta * (180.0 / Math.PI);
+        double snappedDeg = Math.Round(deg / 45.0) * 45.0;
+        if (Math.Abs(deg - snappedDeg) <= CadAngleSnapDeg) theta = snappedDeg * (Math.PI / 180.0);
+        var dir = new Vec2(DetMath.Cos(theta), DetMath.Sin(theta));
+        var nrm = new Vec2(-dir.Y, dir.X);
+        var c = new Vec2(mx, my);
+
+        double s0 = double.MaxValue, s1 = double.MinValue, worst = 0;
+        foreach (var i in idx)
+        {
+            var q = pts[i] - c;
+            double s = q.Dot(dir), r = q.Dot(nrm);
+            s0 = Math.Min(s0, s);
+            s1 = Math.Max(s1, s);
+        }
+        // the residual gate runs on the same trimmed interior the fit used: the two
+        // vertices beside each pin are cap geometry (an edge-hugging hook the ridge leaves
+        // at a flat tip), not the stroke's course — the projected endpoints and the round
+        // cap cover them. The bow gate below still sees every interior vertex, so a
+        // genuinely curved run never passes as a line.
+        foreach (var i in fit)
+        {
+            var q = pts[i] - c;
+            worst = Math.Max(worst, Math.Abs(q.Dot(nrm)));
+        }
+        if (worst > tol) return null;
+        double half = (s1 - s0) / 2, mid = (s0 + s1) / 2;
+        if (half < 1e-9) return null;
+        // bow: fit r = α·u² + β·u + γ with u in [-1, 1]; |α| is the sagitta
+        double su0 = 0, su1 = 0, su2 = 0, su3 = 0, su4 = 0, sr0 = 0, sr1 = 0, sr2 = 0;
+        foreach (var i in idx)
+        {
+            var q = pts[i] - c;
+            double u = (q.Dot(dir) - mid) / half, r = q.Dot(nrm), u2 = u * u;
+            su0 += 1; su1 += u; su2 += u2; su3 += u2 * u; su4 += u2 * u2;
+            sr0 += r; sr1 += r * u; sr2 += r * u2;
+        }
+        double det = su4 * (su2 * su0 - su1 * su1) - su3 * (su3 * su0 - su1 * su2) + su2 * (su3 * su1 - su2 * su2);
+        if (Math.Abs(det) < 1e-12) return null;
+        double alpha = (sr2 * (su2 * su0 - su1 * su1) - su3 * (sr1 * su0 - su1 * sr0) + su2 * (sr1 * su1 - su2 * sr0)) / det;
+        if (Math.Abs(alpha) > StraightRunMaxSag) return null;
+
+        return (Project(pts[Wrap(a)]), Project(pts[Wrap(b)]));
+
+        Vec2 Project(Vec2 p)
+        {
+            var q = p - c;
+            return c + dir * q.Dot(dir);
+        }
+
+        int Wrap(int i) => closed ? ((i % n) + n) % n : i;
+    }
 
     /// <summary>
     /// The twin row pixel of an even-width stroke at (x,y): a 4-neighbour that is ink, not
@@ -641,39 +1066,78 @@ public static class Centerline
         /// holds strictly greater DT), which shatters rings at their octants and cuts wobbly
         /// scan lines into crumbs. Two dead ends within <paramref name="maxDist"/> whose
         /// connecting pixels are all ink of this component get the missing pixels added.
+        /// VEC-52: a wobbly stroke's ridge breaks every few pixels (the DT profile along the
+        /// true centre is non-monotonic at each wobble step, so the local-max test leaves
+        /// isolated pixels and short runs behind), so the bridge now also treats isolated
+        /// ridge pixels (degree 0) as dead ends, iterates until no pair bridges (each pass
+        /// re-reads the ends — a bridged degree-0 pixel becomes a pass-through end that
+        /// bridges onward), and only bridges along the chains: the bridge bearing must stay
+        /// within <see cref="BridgeMaxAngleDeg"/> of the dead end's outward tangent, so a
+        /// stroke's flat tip (whose cap chain ends point back INTO the stroke) never welds
+        /// shut, and parallel strokes that merely pass close stay apart. A degree-0 end is a
+        /// junction remnant (the crossing centre is the ridge's local max while the arms die
+        /// around it), so it is never spent: every arm may weld to it in one pass, rebuilding
+        /// the junction the tracer then splits at — otherwise the two arms left over weld to
+        /// each other diagonally around the crossing corner.
         /// Returns the added pixels so their widths can be measured.
         /// </summary>
         public List<int> BridgeGaps(List<int> pixels, double maxDist)
         {
-            var ends = new List<int>();
-            foreach (int e in pixels)
-                if (skel[e] && Degree(e) == 1) ends.Add(e);
-            var pairs = new List<(double D2, int A, int B, List<int> Line)>();
-            for (int i = 0; i < ends.Count; i++)
-                for (int j = i + 1; j < ends.Count; j++)
-                {
-                    int a = ends[i], b = ends[j];
-                    int dx = b % w - a % w, dy = b / w - a / w;
-                    double d2 = (double)dx * dx + dy * dy;
-                    if (d2 > maxDist * maxDist || d2 < 4) continue;   // 8-connected ends need no bridge
-                    var line = Connect(a, b);
-                    if (line.Count > 0) pairs.Add((d2, a, b, line));
-                }
-            pairs.Sort((x, y) => x.D2 != y.D2 ? x.D2.CompareTo(y.D2) : x.A != y.A ? x.A.CompareTo(y.A) : x.B.CompareTo(y.B));
-            var used = new HashSet<int>();
             var added = new List<int>();
-            foreach (var (_, a, b, line) in pairs)
+            bool bridged = true;
+            while (bridged)
             {
-                if (used.Contains(a) || used.Contains(b)) continue;
-                foreach (int q in line)
+                bridged = false;
+                var ends = new List<(int P, int Deg)>();
+                foreach (int e in pixels)
+                    if (skel[e] && Degree(e) <= 1) ends.Add((e, Degree(e)));
+                var endDeg = new Dictionary<int, int>();
+                foreach (var (e, d) in ends) endDeg[e] = d;
+                var pairs = new List<(double D2, int A, int B, List<int> Line)>();
+                for (int i = 0; i < ends.Count; i++)
+                    for (int j = i + 1; j < ends.Count; j++)
+                    {
+                        int a = ends[i].P, b = ends[j].P;
+                        int dx = b % w - a % w, dy = b / w - a / w;
+                        double d2 = (double)dx * dx + dy * dy;
+                        if (d2 > maxDist * maxDist || d2 < 4) continue;   // 8-connected ends need no bridge
+                        if (!Aligned(a, b) || !Aligned(b, a)) continue;
+                        var line = Connect(a, b);
+                        if (line.Count > 0) pairs.Add((d2, a, b, line));
+                    }
+                pairs.Sort((x, y) => x.D2 != y.D2 ? x.D2.CompareTo(y.D2) : x.A != y.A ? x.A.CompareTo(y.A) : x.B.CompareTo(y.B));
+                var used = new HashSet<int>();
+                foreach (var (_, a, b, line) in pairs)
                 {
-                    skel[q] = true;
-                    added.Add(q);
+                    if (used.Contains(a) || used.Contains(b)) continue;
+                    foreach (int q in line)
+                    {
+                        skel[q] = true;
+                        added.Add(q);
+                    }
+                    // only a real chain end is spent by a bridge; the degree-0 remnant stays
+                    // available for the remaining arms of its junction
+                    if (endDeg[a] > 0) used.Add(a);
+                    if (endDeg[b] > 0) used.Add(b);
+                    bridged = true;
                 }
-                used.Add(a);
-                used.Add(b);
             }
             return added;
+
+            /// <summary>True when the bridge from <paramref name="a"/> to <paramref name="b"/>
+            /// continues a's chain: within <see cref="BridgeMaxAngleDeg"/> of the direction
+            /// pointing away from a's only skeleton neighbour. Isolated pixels have no
+            /// direction and accept any bridge.</summary>
+            bool Aligned(int a, int b)
+            {
+                int nb = Neighbor(a, -1);
+                if (nb < 0) return true;
+                double ax = a % w - nb % w, ay = a / w - nb / w;
+                double bx = b % w - a % w, by = b / w - a / w;
+                double la = Math.Sqrt(ax * ax + ay * ay), lb = Math.Sqrt(bx * bx + by * by);
+                if (la < 1e-9 || lb < 1e-9) return true;
+                return (ax * bx + ay * by) / (la * lb) >= DetMath.Cos(BridgeMaxAngleDeg * Math.PI / 180.0);
+            }
 
             List<int> Connect(int a, int b)
             {
@@ -692,7 +1156,11 @@ public static class Centerline
                     if (comp[q] != id) return [];
                     line.Add(q);
                 }
-                return line;
+                // an all-skeleton line bridges nothing (two ends of one run) and would only
+                // burn the ends so no real gap could close afterwards
+                foreach (int q in line)
+                    if (!skel[q]) return line;
+                return [];
             }
         }
 
@@ -700,10 +1168,16 @@ public static class Centerline
         /// Grows an open chain into the ink the ridge missed at its ends: towards a stroke
         /// tip the DT shrinks while a neighbour along the line still holds the high ground,
         /// so the local-max test drops the last pixel or two and the fitted curve would stop
-        /// short of the ink. Only true dead ends (skeleton degree 1) grow — junction ends
-        /// keep their crossing, and growth stops at the first paper or skeleton pixel.
+        /// short of the ink. On a wobbly stroke the drop is wider (a whole wobble step can
+        /// fall out), so the growth limit scales with the image's median stroke width.
+        /// Only true dead ends (skeleton degree 1) grow — junction ends keep their
+        /// crossing. Growth stops at the first paper pixel, the image edge, or a junction
+        /// (skeleton degree ≥ 3); a plain skeleton pixel (degree ≤ 2) is ABSORBED — the U a
+        /// flat cap leaves in the ridge is the stroke's own tip geometry, and absorbing it
+        /// lets the chain grow through to the true stroke end (the cap-crumb pass then drops
+        /// the leftover fragment, covered by the grown tip's round cap).
         /// </summary>
-        public void Extend(List<int> chain)
+        public void Extend(List<int> chain, int maxGrow)
         {
             if (chain.Count < 2) return;
             Grow(atEnd: false);
@@ -717,12 +1191,13 @@ public static class Centerline
                 int sx = Math.Sign(p % w - q % w), sy = Math.Sign(p / w - q / w);
                 int x = p % w, y = p / w;
                 var grown = new List<int>();
-                while (grown.Count < 4)
+                while (grown.Count < maxGrow)
                 {
                     x += sx; y += sy;
                     if ((uint)x >= (uint)w || (uint)y >= (uint)h) break;
                     int c = y * w + x;
-                    if (comp[c] != id || skel[c]) break;
+                    if (comp[c] != id) break;
+                    if (skel[c] && Degree(c) >= 3) break;
                     grown.Add(c);
                 }
                 if (atEnd) chain.AddRange(grown);
