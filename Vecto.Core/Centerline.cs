@@ -46,7 +46,7 @@ public static class Centerline
 
     /// <summary>TODO(VEC-50): master switch — off until the excess-ink quality fix lands
     /// (CAD benchmark precision 0.761 &lt; 0.95) and the writers emit strokes.</summary>
-    public static readonly bool Enabled = false;
+    public static bool Enabled = false;
 
     /// <summary>
     /// The LineArt centerline stage: classifies ink components, replaces the line-like ones with
