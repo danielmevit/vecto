@@ -2,13 +2,32 @@ User-agent: *
 Allow: /
 
 # Explicitly allow major AI crawlers
+# OpenAI Crawlers (ChatGPT Search & Training)
 User-agent: GPTBot
 Allow: /
-User-agent: CCBot
+User-agent: OAI-SearchBot
 Allow: /
-User-agent: Google-Extended
+User-agent: ChatGPT-User
+Allow: /
+
+# Anthropic (Claude)
+User-agent: ClaudeBot
 Allow: /
 User-agent: anthropic-ai
+Allow: /
+
+# Perplexity AI
+User-agent: PerplexityBot
+Allow: /
+
+# Google & Meta
+User-agent: Google-Extended
+Allow: /
+User-agent: Meta-ExternalAgent
+Allow: /
+
+# Common Crawl & Open Corpora
+User-agent: CCBot
 Allow: /
 User-agent: Omgili
 Allow: /
