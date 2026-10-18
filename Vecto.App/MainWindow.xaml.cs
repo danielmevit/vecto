@@ -59,6 +59,11 @@ public partial class MainWindow : Window
 
     public void TryLoad(string path)
     {
+        if (PdfImport.IsPdf(path))
+        {
+            ViewModel.LoadPdf(path);   // reports its own failures in the status line
+            return;
+        }
         try
         {
             ViewModel.LoadFile(path);
@@ -71,7 +76,7 @@ public partial class MainWindow : Window
 
     void OnOpen(object sender, RoutedEventArgs e)
     {
-        var dlg = new OpenFileDialog { Filter = "Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif|All files|*.*" };
+        var dlg = new OpenFileDialog { Filter = "Images and PDFs|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.pdf|All files|*.*" };
         if (dlg.ShowDialog(this) == true) TryLoad(dlg.FileName);
     }
 

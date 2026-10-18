@@ -21,6 +21,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     CancellationTokenSource? _cts;
     readonly DispatcherTimer _debounce;
     string? _sourcePath;
+    string? _sourceNote;   // extra status-line context for the loaded source (PDF page count)
 
     public MainViewModel()
     {
@@ -182,12 +183,36 @@ public sealed class MainViewModel : INotifyPropertyChanged
         LoadBitmap(bmp, path);
     }
 
+    /// <summary>
+    /// Rasterizes a PDF's first page (600 DPI, no image smoothing — same flags as the CLI) on a
+    /// background thread and traces it like any image. Failures (unreadable, no pages, over the
+    /// pixel cap) land in the status line and leave the previously loaded image untouched.
+    /// </summary>
+    public async void LoadPdf(string path)
+    {
+        Status = "Rendering PDF…";
+        try
+        {
+            var page = await Task.Run(() => PdfImport.LoadFirstPage(path));
+            var bmp = ImageInterop.ToBitmapSource(page.Image);
+            LoadBitmap(bmp, path);
+            _sourceNote = page.PageCount > 1
+                ? $"\nPDF: page 1 of {page.PageCount} — the CLI can select other pages."
+                : "";
+        }
+        catch (Exception ex)
+        {
+            Status = "Could not open PDF: " + ex.Message;
+        }
+    }
+
     public void LoadBitmap(BitmapSource bmp, string? path = null)
     {
         // convert first: if this throws, the previous image, file name and trace result stay untouched
         var raster = ImageInterop.ToRaster(bmp);
         if (bmp.CanFreeze) bmp.Freeze();
         _sourcePath = path;
+        _sourceNote = null;
         _raster = raster;
         SourceBitmap = bmp;
         Raise(nameof(WindowTitle));
@@ -241,7 +266,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 };
             }).ToList();
             var d = result.Diagnostics;
-            Status = $"Traced in {d.TotalMs} ms — {result.Document.Palette.Count} colors, {d.RegionCount} regions, {d.NodeCount} nodes" + HintText(hint);
+            Status = $"Traced in {d.TotalMs} ms — {result.Document.Palette.Count} colors, {d.RegionCount} regions, {d.NodeCount} nodes" + HintText(hint) + _sourceNote;
             StatsText = $"style {d.Params.Style}   detail {(DetailLevel)_detailIndex}\n" +
                         $"regions {d.RegionCount}   chains {d.ChainCount}   nodes {d.NodeCount}\n" +
                         $"palette {d.PaletteMs} ms   segment {d.SegmentMs} ms\n" +
