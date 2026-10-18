@@ -245,27 +245,47 @@ public static class Centerline
         List<CubicBezier> segs;
         if (p.CurveFitting)
         {
-            var poly = CornerPolygon.OptimalPolygon(pts, closed);
-            var corners = CornerPolygon.Corners(pts, closed, poly, p.CornerThresholdDeg);
-            ChainGeometry.SmoothInPlace(pts, closed, corners, 2, 0.5, 0.35);
-            segs = BezierFitter.FitChain(pts, closed, corners, p.FitToleranceSq);
+            // Boundary chains are lattice staircases, so the optimal-polygon DP always finds a
+            // straight run into each chain end. Centerline chains are not lattice geometry:
+            // twin-row half-pixel shifts and ridge-gap bridges can wobble a chain end enough
+            // that no straight run reaches it and the DP comes back empty. Fall back to the
+            // simple fitter there instead of crashing — the stroke still emits.
+            try
+            {
+                var poly = CornerPolygon.OptimalPolygon(pts, closed);
+                var corners = CornerPolygon.Corners(pts, closed, poly, p.CornerThresholdDeg);
+                ChainGeometry.SmoothInPlace(pts, closed, corners, 2, 0.5, 0.35);
+                segs = BezierFitter.FitChain(pts, closed, corners, p.FitToleranceSq);
+            }
+            catch (InvalidOperationException)
+            {
+                segs = FitSimply();
+            }
         }
         else
         {
-            var simple = ChainGeometry.SimplifyDp(pts, p.PolygonEpsilon);
-            segs = new List<CubicBezier>(Math.Max(0, simple.Count - 1));
-            for (int i = 0; i + 1 < simple.Count; i++) segs.Add(CubicBezier.Line(simple[i], simple[i + 1]));
+            segs = FitSimply();
         }
         if (segs.Count == 0) return null;
         return new StrokePath { PaletteIndex = ink, Width = width, Closed = closed, Segments = segs };
+
+        List<CubicBezier> FitSimply()
+        {
+            var simple = ChainGeometry.SimplifyDp(pts, p.PolygonEpsilon);
+            var list = new List<CubicBezier>(Math.Max(0, simple.Count - 1));
+            for (int i = 0; i + 1 < simple.Count; i++) list.Add(CubicBezier.Line(simple[i], simple[i + 1]));
+            return list;
+        }
     }
 
     /// <summary>
     /// The twin row pixel of an even-width stroke at (x,y): a 4-neighbour that is ink, not
-    /// skeleton, with equal DT — and that twin itself has such a neighbour besides (x,y),
-    /// i.e. the twins form a 4-connected parallel row. The isolated equal-DT ink pixel a
-    /// diagonal bridge leaves beside a 1-px staircase has no such partner, so thin diagonals
-    /// and curves keep their true width instead of doubling. Returns -1 when there is no twin.
+    /// skeleton, with equal DT — and that twin is itself part of a parallel row: it has an
+    /// equal-DT ink partner besides (x,y), or equal-DT ink on both sides along the row. The
+    /// zigzag a 2-px band's cleanup leaves has skeleton pixels as the twin row's partners,
+    /// and the isolated equal-DT ink pixel a diagonal bridge leaves beside a 1-px staircase
+    /// has paper on one side — so thin diagonals and curves keep their true width instead of
+    /// doubling. Returns -1 when there is no twin.
     /// </summary>
     static int Twin(bool[] skel, bool[] ink, int[] dtSq, int x, int y, int i, int w, int h)
     {
@@ -280,7 +300,13 @@ public static class Centerline
             twin = q;
             if ((uint)xx >= (uint)w || (uint)yy >= (uint)h) return false;
             if (!ink[q] || skel[q] || dtSq[q] != dtSq[i]) return false;
-            return RowTwin(xx - 1, yy, q - 1, q) || RowTwin(xx + 1, yy, q + 1, q) || RowTwin(xx, yy - 1, q - w, q) || RowTwin(xx, yy + 1, q + w, q);
+            if (RowTwin(xx - 1, yy, q - 1, q) || RowTwin(xx + 1, yy, q + 1, q) || RowTwin(xx, yy - 1, q - w, q) || RowTwin(xx, yy + 1, q + w, q))
+                return true;
+            // the zigzag twin: the row's own pixels are skeleton here, so demand the band
+            // continues on both sides along the row instead
+            return yy == y
+                ? BandAt(xx, yy - 1, q - w) && BandAt(xx, yy + 1, q + w)
+                : BandAt(xx - 1, yy, q - 1) && BandAt(xx + 1, yy, q + 1);
         }
 
         bool RowTwin(int xx, int yy, int q, int except)
@@ -288,6 +314,9 @@ public static class Centerline
             if ((uint)xx >= (uint)w || (uint)yy >= (uint)h || q == except) return false;
             return ink[q] && !skel[q] && dtSq[q] == dtSq[except];
         }
+
+        bool BandAt(int xx, int yy, int q) =>
+            (uint)xx < (uint)w && (uint)yy < (uint)h && ink[q] && dtSq[q] == dtSq[i];
     }
 
     static double Lum(Rgba32 c) => 0.299 * c.R + 0.587 * c.G + 0.114 * c.B;
