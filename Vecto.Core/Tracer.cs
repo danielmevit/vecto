@@ -60,7 +60,9 @@ public static class Tracer
     {
         var total = Stopwatch.StartNew();
         var p = Resolve(options, image);
-        var img = p.MedianPrefilter ? Preprocess.Median3x3(image, ct) : image;
+        var img = p.Style == ImageStyle.LineArt ? ScanPreprocess.ToInkPaper(image, ct)
+            : p.MedianPrefilter ? Preprocess.Median3x3(image, ct)
+            : image;
         int w = img.Width, h = img.Height;
 
         progress?.Invoke("palette", 0.0);
@@ -427,16 +429,23 @@ public static class Tracer
 
     static EffectiveParams Resolve(TraceOptions o, RasterImage img)
     {
-        int unique = CountUniqueOpaque(img, 1025);
+        // Auto never selects LineArt: it is a deliberate mode for scans, and a unique-color
+        // census is meaningless on a noisy scan (or on the binarized raster it produces)
+        int unique = o.Style == ImageStyle.LineArt ? 0 : CountUniqueOpaque(img, 1025);
         var style = o.Style != ImageStyle.Auto ? o.Style
             : unique <= 64 ? ImageStyle.Crisp
             : ImageStyle.Blended;
         int cap = Math.Clamp(o.PaletteMode == PaletteMode.FixedCount ? o.ColorCount : o.MaxColors, 1, 64);
-        bool exact = style == ImageStyle.Crisp && unique <= cap;
+        // LineArt traces the two-colour ink/paper raster from ScanPreprocess, so its palette
+        // is exact by construction regardless of how noisy the input scan was
+        bool exact = style == ImageStyle.LineArt || (style == ImageStyle.Crisp && unique <= cap);
         var (minLow, minMed, minHigh) = style switch
         {
             ImageStyle.Photo => (24, 12, 6),
             ImageStyle.Crisp => (10, 5, 2),
+            // thin strokes are the point of the mode: keep the floor low — bridging has
+            // already made 1-px diagonals single regions, so only true specks get eaten
+            ImageStyle.LineArt => (6, 3, 2),
             _ => (14, 6, 3),
         };
         return new EffectiveParams
@@ -454,7 +463,9 @@ public static class Tracer
             SmoothClamp = 0.6,
             CornerThresholdDeg = 45,
             CornerKeepDeg = 55,
-            SubpixelMaxShift = style == ImageStyle.Crisp ? 0.35 : 0.75,
+            // crisp and the binarized LineArt raster have hard pixel edges — refinement
+            // should only confirm the crack position, not chase anti-aliasing that isn't there
+            SubpixelMaxShift = style is ImageStyle.Crisp or ImageStyle.LineArt ? 0.35 : 0.75,
             CornerRelocateMaxShift = 1.5,
             AngleSnapDeg = 1.0,
             FitToleranceSq = o.Detail switch { DetailLevel.Low => 1.0, DetailLevel.High => 0.09, _ => 0.25 },

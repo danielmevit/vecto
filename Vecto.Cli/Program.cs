@@ -256,6 +256,9 @@ internal static class Program
         Save(SampleGen.Crisp(), "crisp.png");
         Save(SampleGen.Blended(), "blended.png");
         Save(SampleGen.Transparent(), "transparent.png");
+        var (cad, cadMask) = SampleGen.CadScan();
+        Save(cad, "cad.png");
+        Save(cadMask, "cad-mask.png");
         return 0;
 
         void Save(RasterImage img, string name)
@@ -367,7 +370,7 @@ internal static class Program
               --colors <n|auto>     fixed palette size, or automatic (default auto)
               --max-colors <n>      cap for automatic palette (default 16)
               --detail <level>      low | medium | high (default medium)
-              --style <style>       auto | crisp | blended | photo (default auto)
+              --style <style>       auto | crisp | blended | photo | lineart (default auto)
               --polygons            skip curve fitting, emit simplified polygons
               --epsilon <px>        polygon simplification tolerance (0 = exact lattice)
               --seed <n>            random seed for palette clustering (default 1)

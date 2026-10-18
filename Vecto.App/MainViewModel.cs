@@ -149,7 +149,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
     public string ColorCountText => ((int)_colorCount).ToString();
 
-    int _styleIndex;   // matches ImageStyle enum order: Auto, Crisp, Blended, Photo
+    int _styleIndex;   // matches ImageStyle enum order: Auto, Crisp, Blended, Photo, LineArt
     public int StyleIndex
     {
         get => _styleIndex;
