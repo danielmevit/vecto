@@ -67,8 +67,11 @@ Vecto stays in beta: every release is 0.4.x.
   (VEC-46: status-bar tip; gradient check fires on the gradient logos and on none of the flat bench images)
 
 ## Later 0.4.x
-- **CAD / line-art centerline mode** (GitHub issue #1) — constant-width strokes as paths with a stroke weight; see
-  docs/ai/research/2026-10-12-cad-mode-research.md.
+- ~~**CAD / line-art centerline mode** (GitHub issue #1)~~ **Stage 1 shipped 2026-10-18 (VEC-07c)**: `--style lineart` /
+  app "Line art" — Sauvola scan front-end + thin-stroke survival (benchmark recall/precision 0.97/0.97). Remaining, per
+  docs/ai/research/2026-10-12-cad-mode-research.md: **centerline extraction** (strokes as single paths with a stroke
+  weight, not double outlines — the core ask), then CAD regularization (axis snap, gap jump) and DXF export; deskew and
+  text separation optional. Real-scan validation on the way (coord/artifacts/cad-real).
 - **Small text in JPEGs** (thin letters deform, faint captions vanish) — text-aware tracing.
 - **JPEG tile patterns** (pattern-tiles-style JPEGs): noisy smoothing per chain (fewer passes on curved chains) to
   recover the last realistic regression vs 0.4.2.
