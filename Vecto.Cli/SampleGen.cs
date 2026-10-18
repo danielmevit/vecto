@@ -133,6 +133,60 @@ public static class SampleGen
         return (scan, ScanPreprocess.MaskToImage(ink, w, h));
     }
 
+    /// <summary>
+    /// A minimal single-page PDF embedding the CAD scan raster (8-bit grayscale,
+    /// FlateDecode-compressed) — a realistic "scanned drawing" fixture for the PDF input
+    /// path, built with no dependencies beyond System.IO.Compression.
+    /// </summary>
+    public static byte[] CadPdf()
+    {
+        var (scan, _) = CadScan();
+        int w = scan.Width, h = scan.Height;
+        var gray = new byte[w * h];
+        for (int i = 0; i < gray.Length; i++)
+            gray[i] = scan.Pixels[i * 4];
+        return BuildImagePdf(w, h, gray);
+    }
+
+    /// <summary>
+    /// Assembles a valid PDF (catalog, page tree, image XObject, content stream, xref)
+    /// around one DeviceGray 8-bit raster drawn 1:1 into the MediaBox.
+    /// </summary>
+    static byte[] BuildImagePdf(int w, int h, byte[] gray)
+    {
+        byte[] image;
+        using (var raw = new MemoryStream())
+        {
+            using (var zlib = new System.IO.Compression.ZLibStream(
+                raw, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: true))
+                zlib.Write(gray, 0, gray.Length);
+            image = raw.ToArray();
+        }
+        var content = System.Text.Encoding.Latin1.GetBytes(
+            FormattableString.Invariant($"q {w} 0 0 {h} 0 0 cm /Im0 Do Q\n"));
+        using var pdf = new MemoryStream();
+        var offsets = new long[5];
+        void Put(string s) => pdf.Write(System.Text.Encoding.Latin1.GetBytes(s));
+        Put("%PDF-1.7\n%\u00E2\u00E3\u00CF\u00D3\n");
+        offsets[0] = pdf.Position; Put("1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n");
+        offsets[1] = pdf.Position; Put("2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n");
+        offsets[2] = pdf.Position; Put(FormattableString.Invariant(
+            $"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >> endobj\n"));
+        offsets[3] = pdf.Position; Put(FormattableString.Invariant(
+            $"4 0 obj << /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /Length {image.Length} >> stream\n"));
+        pdf.Write(image);
+        Put("\nendstream endobj\n");
+        offsets[4] = pdf.Position; Put(FormattableString.Invariant($"5 0 obj << /Length {content.Length} >> stream\n"));
+        pdf.Write(content);
+        Put("endstream endobj\n");
+        long xref = pdf.Position;
+        Put("xref\n0 6\n0000000000 65535 f \n");
+        foreach (var o in offsets)
+            Put(FormattableString.Invariant($"{o:D10} 00000 n \n"));
+        Put(FormattableString.Invariant($"trailer << /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"));
+        return pdf.ToArray();
+    }
+
     /// <summary>One separable [1,2,1]/4 blur pass (σ ≈ 0.45; the scan applies it twice).</summary>
     static double[] Blur(double[] src, int w, int h)
     {

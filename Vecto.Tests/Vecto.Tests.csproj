@@ -25,4 +25,18 @@
     <ProjectReference Include="..\Vecto.Cli\Vecto.Cli.csproj" />
   </ItemGroup>
 
+  <!-- the CLI assembly is desktop-only (win/linux/macOS); mirror that here so CA1416
+       stays satisfied for the PDFtoImage-backed PDF input path -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>Windows</_Parameter1>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>Linux</_Parameter1>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+      <_Parameter1>macOS</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

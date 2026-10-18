@@ -1,5 +1,12 @@
 using System.Globalization;
+using System.Runtime.Versioning;
 using Vecto.Core;
+
+// the CLI ships for exactly these desktop platforms (win-x64, linux-x64, osx publishes);
+// this also satisfies CA1416 for PDFtoImage, whose API carries the same platform set
+[assembly: SupportedOSPlatform("Windows")]
+[assembly: SupportedOSPlatform("Linux")]
+[assembly: SupportedOSPlatform("macOS")]
 
 namespace Vecto.Cli;
 
@@ -56,6 +63,8 @@ internal static class Program
         var inputs = new List<string>();
         string? output = null, outDir = null, segPng = null;
         var opt = new TraceOptions();
+        int pdfDpi = PdfInput.DefaultDpi;
+        string pdfPages = "1";
         bool check = false, stats = false;
         for (int i = 0; i < args.Length; i++)
         {
@@ -98,6 +107,12 @@ internal static class Program
                 case "--seed":
                     opt.Seed = int.Parse(Next(args, ref i), CultureInfo.InvariantCulture);
                     break;
+                case "--pdf-dpi":
+                    pdfDpi = PdfInput.ParseDpi(Next(args, ref i));
+                    break;
+                case "--pages":
+                    pdfPages = Next(args, ref i);
+                    break;
                 case "--seg-png":
                     segPng = Next(args, ref i);
                     break;
@@ -121,20 +136,35 @@ internal static class Program
         bool allPlanar = true;
         foreach (var input in inputs)
         {
-            var outPath = output ?? Path.ChangeExtension(
-                outDir == null ? input : Path.Combine(outDir, Path.GetFileName(input)), ".svg");
-            var img = ImageIo.Load(input);
-            var res = Tracer.Trace(img, opt);
-            File.WriteAllText(outPath, SvgWriter.Write(res.Document));
-            Console.WriteLine(FormattableString.Invariant(
-                $"{Path.GetFileName(input)} -> {outPath}  ({res.Diagnostics.TotalMs} ms, {res.Document.Palette.Count} colors, {res.Diagnostics.RegionCount} regions, {res.Diagnostics.NodeCount} nodes)"));
-            if (segPng != null)
+            var basePath = outDir == null ? input : Path.Combine(outDir, Path.GetFileName(input));
+            var pages = PdfInput.IsPdf(input)
+                ? PdfInput.Load(input, pdfDpi, pdfPages)
+                : [new PdfInput.PdfPage(1, ImageIo.Load(input))];
+            if (pages.Count > 1 && output != null)
+                throw new ArgumentException("-o is for a single page; use --out-dir for multi-page PDFs");
+            if (pages.Count > 1 && segPng != null)
+                throw new ArgumentException("--seg-png is for a single page");
+            foreach (var page in pages)
             {
-                ImageIo.SavePng(SegmentationImage(res), segPng);
-                Console.WriteLine("segmentation -> " + segPng);
+                string baseNoExt = Path.Combine(
+                    Path.GetDirectoryName(basePath) ?? "",
+                    Path.GetFileNameWithoutExtension(basePath));
+                var outPath = output ?? (pages.Count > 1
+                    ? baseNoExt + FormattableString.Invariant($"-{page.Number}.svg")
+                    : baseNoExt + ".svg");
+                var img = page.Image;
+                var res = Tracer.Trace(img, opt);
+                File.WriteAllText(outPath, SvgWriter.Write(res.Document));
+                Console.WriteLine(FormattableString.Invariant(
+                    $"{Path.GetFileName(input)}{(pages.Count > 1 ? $"[{page.Number}]" : "")} -> {outPath}  ({res.Diagnostics.TotalMs} ms, {res.Document.Palette.Count} colors, {res.Diagnostics.RegionCount} regions, {res.Diagnostics.NodeCount} nodes)"));
+                if (segPng != null)
+                {
+                    ImageIo.SavePng(SegmentationImage(res), segPng);
+                    Console.WriteLine("segmentation -> " + segPng);
+                }
+                if (stats) PrintStats(res);
+                if (check && !PlanarityCheck(res, img)) allPlanar = false;
             }
-            if (stats) PrintStats(res);
-            if (check && !PlanarityCheck(res, img)) allPlanar = false;
         }
         return allPlanar ? 0 : 2;
     }
@@ -259,6 +289,9 @@ internal static class Program
         var (cad, cadMask) = SampleGen.CadScan();
         Save(cad, "cad.png");
         Save(cadMask, "cad-mask.png");
+        var pdfPath = Path.Combine(dir, "cad.pdf");
+        File.WriteAllBytes(pdfPath, SampleGen.CadPdf());
+        Console.WriteLine("wrote " + pdfPath);
         return 0;
 
         void Save(RasterImage img, string name)
@@ -356,7 +389,9 @@ internal static class Program
 
             usage:
               vecto trace <images...> [options]  vectorize images (also: vecto <image>);
-                                                wildcards ok: vecto trace *.png --out-dir out
+                                                wildcards ok: vecto trace *.png --out-dir out;
+                                                PDF input is rasterized in memory (PDFium)
+                                                and traced page by page
               vecto samples [dir]               write procedural test images
               vecto render <svg> [-o png] [--scale s]
                                                 rasterize an SVG (M/L/H/V/C/Z paths)
@@ -374,6 +409,8 @@ internal static class Program
               --polygons            skip curve fitting, emit simplified polygons
               --epsilon <px>        polygon simplification tolerance (0 = exact lattice)
               --seed <n>            random seed for palette clustering (default 1)
+              --pdf-dpi <n>         rasterization DPI for PDF pages (default 600)
+              --pages <range>       PDF pages to trace: 1, 2-4, comma lists (default 1)
               --seg-png <file>      also write the segmentation as a PNG
               --check               verify planar partition (areas must tile the canvas)
               --stats               print resolved parameters and stage timings
