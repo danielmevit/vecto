@@ -17,9 +17,11 @@ internal static class BezierFitter
 
     /// <summary>
     /// Consecutive straight segments whose shared vertex sits on the merged chord collapse
-    /// into one line — heals sides split by the chain seam or by max-error splits.
+    /// into one line — heals sides split by the chain seam or by max-error splits. The
+    /// centerline regularizer reuses this to collapse the pieces a gap-jump merge
+    /// concatenates (VEC-52).
     /// </summary>
-    static void MergeCollinearLines(List<CubicBezier> segs, bool closed, double tolSq)
+    internal static void MergeCollinearLines(List<CubicBezier> segs, bool closed, double tolSq)
     {
         bool merged = true;
         while (merged && segs.Count > 1)
