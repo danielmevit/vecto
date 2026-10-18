@@ -1,7 +1,6 @@
 using Vecto.Cli;
 using Vecto.Core;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace Vecto.Tests;
 
@@ -11,9 +10,6 @@ public class CenterlineTests
 {
     static readonly Rgba32 White = new(255, 255, 255, 255);
     static readonly Rgba32 Black = new(0, 0, 0, 255);
-
-    readonly ITestOutputHelper _output;
-    public CenterlineTests(ITestOutputHelper output) => _output = output;
 
     static RasterImage Make(int w, int h, Func<int, int, bool> ink) =>
         Make(w, h, (x, y) => ink(x, y) ? Black : White);
@@ -106,162 +102,6 @@ public class CenterlineTests
         {
             Assert.False(stroke.Closed);
             Assert.True(Math.Abs(stroke.Width - 3.0) <= 0.5, $"width {stroke.Width:0.00} vs 3.0");
-        }
-    }
-
-    [Fact]
-    public void DEBUG_Dump()
-    {
-        var (scan, mask) = SampleGen.CadScan();
-        Centerline.DebugLog = new List<string>();
-        VectorDocument doc;
-        try
-        {
-            doc = Tracer.Trace(scan, new TraceOptions { Style = ImageStyle.LineArt }).Document;
-        }
-        catch (Exception ex)
-        {
-            ((Action<string>)_output.WriteLine)("TRACE THREW: " + ex.Message);
-            foreach (var s in Centerline.DebugLog.TakeLast(80)) ((Action<string>)_output.WriteLine)(s);
-            Centerline.DebugLog = null;
-            Centerline.Enabled = true;
-            return;
-        }
-        foreach (var s in Centerline.DebugLog?.TakeLast(400) ?? []) ((Action<string>)_output.WriteLine)(s);
-        Centerline.DebugLog = null;
-        Centerline.Enabled = true;
-        ((Action<string>)_output.WriteLine)($"strokes={doc.Strokes.Count} regions={doc.Regions.Count}");
-
-        // TEMP: ASCII map of ink/skeleton/DT around the left frame edge
-        {
-            var inkMap = ScanPreprocess.InkMask(scan);
-            int w = scan.Width, h = scan.Height;
-            var dt = Centerline.EdtSq(inkMap, w, h);
-            var skel = Centerline.Ridge(inkMap, dt, w, h);
-            for (int y = 6; y < 22; y++)
-            {
-                var row = $"y={y,3} ";
-                for (int x = 5; x < 14; x++)
-                {
-                    int i = y * w + x;
-                    row += skel[i] ? $"[{dt[i]}]" : inkMap[i] ? $" {dt[i]} " : " . ";
-                }
-                ((Action<string>)_output.WriteLine)(row);
-            }
-        }
-
-        // combined render, same counting as the benchmark
-        var mp0 = mask.Pixels;
-        var full = Rasterizer.Render(doc).Pixels;
-        long t0 = 0, b0 = 0, truth0 = 0;
-        for (int i = 0; i < mp0.Length; i += 4)
-        {
-            bool ti = mp0[i] < 128;
-            bool pi = full[i + 3] >= 128 && full[i] < 128;
-            if (ti) truth0++;
-            if (pi) t0++;
-            if (ti && pi) b0++;
-        }
-        ((Action<string>)_output.WriteLine)($"combined: truth={truth0} traced={t0} both={b0} recall={(double)b0 / truth0:0.###} precision={(double)b0 / t0:0.###}");
-
-        // TEMP: localize the combined-render off-ink pixels — stroke-only, region-only, or AA-promoted
-        {
-            var rr0 = Rasterizer.Render(new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette, Regions = doc.Regions, Strokes = [] }).Pixels;
-            var ss0 = Rasterizer.Render(new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette, Regions = [], Strokes = doc.Strokes }).Pixels;
-            long onlyStroke = 0, onlyRegion = 0, promoted = 0;
-            var grid = new int[15, 12];
-            for (int i = 0; i < mp0.Length; i += 4)
-            {
-                bool ti = mp0[i] < 128;
-                if (ti) continue;
-                bool pi = full[i + 3] >= 128 && full[i] < 128;
-                if (!pi) continue;
-                bool s = ss0[i + 3] >= 128 && ss0[i] < 128;
-                bool r = rr0[i + 3] >= 128 && rr0[i] < 128;
-                if (s && !r) onlyStroke++;
-                else if (r && !s) onlyRegion++;
-                else if (s && r) { onlyStroke++; onlyRegion++; }
-                else
-                {
-                    promoted++;
-                    int p = i / 4;
-                    grid[p % 480 / 32, p / 480 / 30]++;
-                    if (promoted <= 12)
-                        ((Action<string>)_output.WriteLine)(
-                            $"  promoted @({p % 480},{p / 480}) full_a={full[i + 3]} full_r={full[i]} s_a={ss0[i + 3]} s_r={ss0[i]} r_a={rr0[i + 3]} r_r={rr0[i]}");
-                }
-            }
-            for (int gy = 0; gy < 12; gy++)
-            {
-                var row = "";
-                for (int gx = 0; gx < 15; gx++) row += $"{grid[gx, gy],4}";
-                if (row.Trim('0').Length > 0) ((Action<string>)_output.WriteLine)(gy * 30 + ": " + row);
-            }
-            ((Action<string>)_output.WriteLine)($"off-ink: stroke-only={onlyStroke} region-only={onlyRegion} aa-promoted={promoted}");
-        }
-
-        // strokes-only render: which strokes paint off-ink?
-        var strokesOnly = new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette, Regions = [], Strokes = doc.Strokes };
-        var rp = Rasterizer.Render(strokesOnly).Pixels;
-        var mp = mask.Pixels;
-        long strokePx = 0, strokeOnInk = 0;
-        for (int i = 0; i < mp.Length; i += 4)
-        {
-            bool painted = rp[i + 3] >= 128 && rp[i] < 128;
-            if (!painted) continue;
-            strokePx++;
-            if (mp[i] < 128) strokeOnInk++;
-        }
-        ((Action<string>)_output.WriteLine)($"stroke coverage={strokePx} on-ink={strokeOnInk} precision={(double)strokeOnInk / strokePx:0.###}");
-
-        // regions-only render
-        var regionsOnly = new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette, Regions = doc.Regions, Strokes = [] };
-        var rr = Rasterizer.Render(regionsOnly).Pixels;
-        long regPx = 0, regOnInk = 0;
-        for (int i = 0; i < mp.Length; i += 4)
-        {
-            bool painted = rr[i + 3] >= 128 && rr[i] < 128;
-            if (!painted) continue;
-            regPx++;
-            if (mp[i] < 128) regOnInk++;
-        }
-        ((Action<string>)_output.WriteLine)($"region coverage={regPx} on-ink={regOnInk} precision={(regPx == 0 ? 0 : (double)regOnInk / regPx):0.###}");
-
-        // per-stroke: length, width, on-ink fraction of its own coverage
-        for (int s = 0; s < doc.Strokes.Count; s++)
-        {
-            var one = new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette, Regions = [], Strokes = [doc.Strokes[s]] };
-            var sp = Rasterizer.Render(one).Pixels;
-            long px = 0, on = 0;
-            for (int i = 0; i < mp.Length; i += 4)
-            {
-                bool painted = sp[i + 3] >= 128 && sp[i] < 128;
-                if (!painted) continue;
-                px++;
-                if (mp[i] < 128) on++;
-            }
-            double len = 0;
-            foreach (var seg in doc.Strokes[s].Segments) len += Math.Sqrt(seg.P3.DistSq(seg.P0));
-            ((Action<string>)_output.WriteLine)(
-                $"stroke {s,2}: len={len,7:0.0} w={doc.Strokes[s].Width,4:0.00} closed={doc.Strokes[s].Closed} px={px} onInk={on} prec={(px == 0 ? 0 : (double)on / px):0.###} from=({doc.Strokes[s].Segments[0].P0.X:0.##},{doc.Strokes[s].Segments[0].P0.Y:0.##}) to=({doc.Strokes[s].Segments[^1].P3.X:0.##},{doc.Strokes[s].Segments[^1].P3.Y:0.##})");
-        }
-        for (int r = 0; r < doc.Regions.Count; r++)
-        {
-            var reg = doc.Regions[r];
-            var c = doc.Palette[reg.PaletteIndex].Color;
-            // TEMP: bbox from a solo render, to identify what each region is
-            var solo = Rasterizer.Render(new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette, Regions = [reg], Strokes = [] }).Pixels;
-            int minx = int.MaxValue, miny = int.MaxValue, maxx = -1, maxy = -1;
-            for (int i = 0; i < solo.Length; i += 4)
-            {
-                if (solo[i + 3] < 128) continue;
-                int x = i / 4 % 480, y = i / 4 / 480;
-                if (x < minx) minx = x;
-                if (x > maxx) maxx = x;
-                if (y < miny) miny = y;
-                if (y > maxy) maxy = y;
-            }
-            ((Action<string>)_output.WriteLine)($"region {r,2}: area={reg.Area,6} color=#{c.R:x2}{c.G:x2}{c.B:x2} bbox=({minx},{miny})-({maxx},{maxy})");
         }
     }
 
