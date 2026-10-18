@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Angles carry drafting intent.** Fitted line angles now read like a drafting callout:
+  lines meant to be parallel come out exactly parallel, angles close to the 15-degree grid
+  (0/15/30/45/60/75/90...) snap to it exactly, and every other angle is a whole degree —
+  a line that measures 62.7 degrees was always a 63-degree line. Genuinely odd angles are
+  left as measured; arcs and circles are untouched.
 - **Line art strokes are now clean CAD primitives.** In Line art mode, a straight ink line is
   now ONE path with exactly two anchor points (straight means straight — no pixel zig-zag),
   a circle is one exact arc, and lines that merely touch or cross are welded back into single
