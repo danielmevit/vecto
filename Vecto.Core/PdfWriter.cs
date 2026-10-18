@@ -31,6 +31,15 @@ public static class PdfWriter
                 AppendLoop(content, loop, doc.Height);
             content.Append("f\n");
         }
+        foreach (var stroke in doc.Strokes)
+        {
+            var c = doc.Palette[stroke.PaletteIndex].Color;
+            content.Append(C(c.R)).Append(' ').Append(C(c.G)).Append(' ').Append(C(c.B)).Append(" RG\n");
+            content.Append(stroke.Width.ToString("0.00", CultureInfo.InvariantCulture)).Append(" w\n");
+            content.Append("1 J\n1 j\n");
+            AppendStroke(content, stroke, doc.Height);
+            content.Append("S\n");
+        }
 
         var stream = Compress(Encoding.Latin1.GetBytes(content.ToString()));
         using var pdf = new MemoryStream();

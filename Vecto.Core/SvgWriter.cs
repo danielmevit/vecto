@@ -29,6 +29,18 @@ public static class SvgWriter
             foreach (var loop in region.Loops) AppendLoop(sb, loop);
             sb.Append("\" />\n");
         }
+        foreach (var stroke in doc.Strokes)
+        {
+            var c = doc.Palette[stroke.PaletteIndex].Color;
+            sb.Append("<path fill=\"none\" stroke=\"#")
+              .Append(c.R.ToString("x2", CultureInfo.InvariantCulture))
+              .Append(c.G.ToString("x2", CultureInfo.InvariantCulture))
+              .Append(c.B.ToString("x2", CultureInfo.InvariantCulture))
+              .Append("\" stroke-width=\"").Append(F(stroke.Width))
+              .Append("\" stroke-linecap=\"round\" stroke-linejoin=\"round\" opacity=\"1.00\" d=\"");
+            AppendStroke(sb, stroke);
+            sb.Append("\" />\n");
+        }
         sb.Append("</svg>\n");
         return sb.ToString();
     }

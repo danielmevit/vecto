@@ -17,7 +17,7 @@ public sealed class StrokePath
 /// Centerline extraction for <see cref="ImageStyle.LineArt"/> (VEC-50, stage 2 of the CAD mode):
 /// thin line-work is re-represented as single stroked paths instead of the dual-boundary filled
 /// ribbons the planar pipeline produces. Pipeline: exact Euclidean distance transform
-/// (Felzenszwalb–Huttenlocher, two 1-D passes) → Zhang–Suen thinning plus an 8-simple cleanup →
+/// (Felzenszwalb–Huttenlocher, two 1-D passes) → medial-axis ridge plus an 8-simple cleanup →
 /// chain tracing that splits at junctions → spur pruning → per-chain width = 2×median DT (+1
 /// when the stroke has no centre pixel, i.e. even widths) → the same corner/smooth/fit stage the
 /// boundary chains get. A component goes centerline only when it is line-like: thin (≤ 2× the
@@ -44,9 +44,9 @@ public static class Centerline
     /// <summary>…and sit in a row of at least this many same-size peers (Fletcher–Kasturi text rows).</summary>
     public const int TextPeerMin = 4;
 
-    /// <summary>TODO(VEC-50): master switch — off until the excess-ink quality fix lands
-    /// (CAD benchmark precision 0.761 &lt; 0.95) and the writers emit strokes.</summary>
-    public static bool Enabled = false;
+    /// <summary>Master switch for the centerline stage: off → every LineArt component keeps
+    /// today's filled treatment (the VEC-50 escape hatch).</summary>
+    public static bool Enabled = true;
 
     /// <summary>
     /// The LineArt centerline stage: classifies ink components, replaces the line-like ones with
@@ -96,8 +96,7 @@ public static class Centerline
             if (comp[i] >= 0) comps[comp[i]].Pixels.Add(i);
 
         var dtSq = EdtSq(inkMask, w, h);
-        var skel = (bool[])inkMask.Clone();
-        Thin(skel, w, h);
+        var skel = Ridge(inkMask, dtSq, w, h);
 
         // per-skeleton-pixel width: 2×DT−1 measures to the paper pixel CENTRES, which is exact
         // for odd stroke widths; a 4-neighbour of equal DT that fell out of the skeleton is the
@@ -323,50 +322,42 @@ public static class Centerline
     static double Intersect(double[] f, int q, int vk) =>
         ((f[q] + (double)q * q) - (f[vk] + (double)vk * vk)) / (2.0 * (q - vk));
 
-    // ---- thinning ----
+    // ---- skeleton ----
 
     /// <summary>
-    /// Zhang–Suen thinning (8-connected ink) followed by an 8-simple cleanup. ZS is stable on
-    /// 2-px diagonal strips — every pixel of one has two 0→1 transitions, so neither subpass
-    /// ever deletes it (a bridged 1-px diagonal is exactly such a strip) — and it leaves small
-    /// plateaus at junctions. The cleanup deletes, in raster order, every pixel with ≥3
-    /// skeleton neighbours whose neighbours stay 8-connected without it; pixels with ≤2
-    /// neighbours (chain middles, stroke ends) are never touched.
+    /// Medial-axis skeleton: a pixel survives when its squared distance transform is a local
+    /// maximum in the 4-neighbourhood (paper neighbours have DT 0, so they never disqualify).
+    /// This is the ridge the research doc prescribes, and unlike iterative thinning it cannot
+    /// erode a structure away: a 2-px diagonal strip — what diagonal bridging turns a 1-px
+    /// diagonal into — keeps its full extent instead of collapsing to a single pixel. The
+    /// 8-simple cleanup then flattens the equal-DT plateaus (twin rows of even-width strokes,
+    /// staircase strips) down to 8-connected 1-px chains.
     /// </summary>
-    public static void Thin(bool[] skel, int w, int h)
+    public static bool[] Ridge(bool[] ink, int[] dtSq, int w, int h)
     {
-        var del = new List<int>();
-        bool changed = true;
-        while (changed)
-        {
-            changed = false;
-            for (int sub = 0; sub < 2; sub++)
+        var skel = new bool[w * h];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
             {
-                del.Clear();
-                for (int y = 0; y < h; y++)
-                    for (int x = 0; x < w; x++)
-                    {
-                        int i = y * w + x;
-                        if (!skel[i]) continue;
-                        bool p2 = At(x, y - 1), p3 = At(x + 1, y - 1), p4 = At(x + 1, y),
-                             p5 = At(x + 1, y + 1), p6 = At(x, y + 1), p7 = At(x - 1, y + 1),
-                             p8 = At(x - 1, y), p9 = At(x - 1, y - 1);
-                        int b = (p2 ? 1 : 0) + (p3 ? 1 : 0) + (p4 ? 1 : 0) + (p5 ? 1 : 0)
-                              + (p6 ? 1 : 0) + (p7 ? 1 : 0) + (p8 ? 1 : 0) + (p9 ? 1 : 0);
-                        if (b < 2 || b > 6) continue;
-                        int a = (!p2 && p3 ? 1 : 0) + (!p3 && p4 ? 1 : 0) + (!p4 && p5 ? 1 : 0)
-                              + (!p5 && p6 ? 1 : 0) + (!p6 && p7 ? 1 : 0) + (!p7 && p8 ? 1 : 0)
-                              + (!p8 && p9 ? 1 : 0) + (!p9 && p2 ? 1 : 0);
-                        if (a != 1) continue;
-                        if (sub == 0 ? (p2 && p4 && p6) || (p4 && p6 && p8)
-                                     : (p2 && p4 && p8) || (p2 && p6 && p8)) continue;
-                        del.Add(i);
-                    }
-                foreach (int i in del) skel[i] = false;
-                changed |= del.Count > 0;
+                int i = y * w + x;
+                if (!ink[i]) continue;
+                int d = dtSq[i];
+                if (Ok(i - 1, x > 0, d) && Ok(i + 1, x < w - 1, d) && Ok(i - w, y > 0, d) && Ok(i + w, y < h - 1, d))
+                    skel[i] = true;
             }
-        }
+        Cleanup(skel, w, h);
+        return skel;
 
+        bool Ok(int q, bool inside, int d) => !inside || !ink[q] || dtSq[q] <= d;
+    }
+
+    /// <summary>
+    /// Deletes, in raster order, every pixel with ≥3 skeleton neighbours whose neighbours stay
+    /// 8-connected without it; pixels with ≤2 neighbours (chain middles, stroke ends) are never
+    /// touched. Repeats until stable, so plateaus collapse to 1-px chains.
+    /// </summary>
+    public static void Cleanup(bool[] skel, int w, int h)
+    {
         bool removed = true;
         while (removed)
         {
@@ -380,8 +371,6 @@ public static class Centerline
                     removed = true;
                 }
         }
-
-        bool At(int x, int y) => (uint)x < (uint)w && (uint)y < (uint)h && skel[y * w + x];
     }
 
     static int Neighbors8(bool[] skel, int x, int y, int w, int h)
@@ -461,6 +450,7 @@ public static class Centerline
         readonly HashSet<int> visited = [];
         readonly HashSet<long> used = [];
         readonly List<int> nb = [];
+        int _pruneLen;
 
         public ChainTracer(bool[] skel, int[] comp, int id, int w, int h)
         {
@@ -488,6 +478,7 @@ public static class Centerline
         /// junction; a branch that ends at another endpoint is a real (short) stroke and stays.</summary>
         public void PruneSpurs(List<int> pixels, int pruneLen)
         {
+            _pruneLen = pruneLen;
             bool removed = true;
             while (removed)
             {
@@ -536,7 +527,12 @@ public static class Centerline
                         continue;
                     }
                     if (visited.Contains(n)) continue;
-                    chains.Add((Walk(j, n), false));
+                    var chain = Walk(j, n);
+                    // a walk that comes straight back to its own junction is a micro-cycle
+                    // artifact (the end-of-stroke bridge triangle), not a real ring: drop it
+                    // when it is spur-sized — a genuine lollipop ring is far longer
+                    if (chain[^1] == j && chain.Count - 1 < _pruneLen) continue;
+                    chains.Add((chain, false));
                 }
             }
             foreach (int r in pixels)
