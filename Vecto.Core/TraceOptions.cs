@@ -9,6 +9,9 @@ public enum ImageStyle
     Blended,
     /// <summary>Continuous-tone input — denoised first, tighter cluster merging.</summary>
     Photo,
+    /// <summary>Scanned line drawings / CAD art — Sauvola-binarized to ink/paper before tracing;
+    /// never selected by Auto (see ScanPreprocess).</summary>
+    LineArt,
 }
 
 public enum DetailLevel { Low, Medium, High }

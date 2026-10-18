@@ -72,3 +72,20 @@ under an open-source licence, and Apache-2.0 code may be combined into an AGPL-3
 closed-source commercial build of the CLI would no longer qualify via "open source" — it then
 needs the Split License's small-company clause (< 1M USD revenue) or a Six Labors commercial
 licence. The app and the engine do not use ImageSharp.
+
+
+## LineArt scan mode: binarize to pure ink/paper before the pipeline (VEC-07, issue #1)
+
+The `ImageStyle.LineArt` front-end (`ScanPreprocess.ToInkPaper`) normalizes any scan to pure
+black ink on pure white paper, so the palette is an exact 2-colour palette by construction,
+regardless of the original colours (blueprint blue, pencil grey, aged paper). Sauvola adaptive
+thresholding runs on Rec.601 luminance via integral images, with k = 0.42 and window 31 —
+measured on the synthetic CAD benchmark (recall/precision 0.97/0.97): lower k dilates strokes
+with their blur halos, higher k dissolves faint 1-px strokes. Diagonal-contact bridging
+deliberately merges strokes that touch only corner-to-corner — line-art mending, and the ink
+is one region colour either way — because 4-connected labelling would otherwise shatter 1-px
+diagonal strokes into runs that small-region absorption deletes. Auto never selects LineArt:
+a unique-colour census is meaningless on a noisy scan, so it stays a deliberate user choice.
+Small-region absorption doubles as the despeckle pass on the binarized raster, so no separate
+despeckle stage exists.
+

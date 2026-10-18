@@ -8,6 +8,7 @@ place: `Tracer.Resolve` → `EffectiveParams` (dumped by `vecto trace --stats`).
 |---|-------|-----------|------------|------------------------|
 | 1 | Style resolve | unique-color census → Crisp/Blended heuristic | ≤64 unique → Crisp | Tracer.cs · `Tracer.Resolve` |
 | 2 | Prefilter (Photo only) | 3×3 per-channel median | — | Preprocess.cs · `Preprocess.Median3x3` |
+| 2b | Scan binarize (LineArt only) | luminance → Sauvola via integral images → ink/paper raster → 8→4 diagonal bridging (LineArt style only; Auto never selects it) | window 31, k 0.42, R 128 | ScanPreprocess.cs · `ScanPreprocess.ToInkPaper` / `InkMask` / `BridgeDiagonalContacts` |
 | 3 | Palette | exact unique colors, or weighted k-means++ in Oklab over a color histogram; Auto mode merges clusters agglomeratively | `KMeansK` (≤64), `MergeThreshold` 0.055 (0.03 photo), edge-excluded sampling (Δchannel > 24) | PaletteBuilder.cs · `PaletteBuilder.Build` |
 | 4 | Labeling | nearest palette color in Oklab; alpha < 128 → transparent (-1) | `Segmenter.OpaqueThreshold` | Segmentation.cs · `Segmenter.Label` |
 | 5 | Absorption | regions < MinRegionArea relabeled to longest-border neighbor (iterated ≤10 passes); eats AA fringes and dust | `MinRegionArea` per Detail/Style (2–24 px) | Segmentation.cs · `Segmenter.AbsorbSmallRegions` |
