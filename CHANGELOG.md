@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Line art strokes are now real strokes (CAD Stage 2).** In Line art mode, thin ink strokes trace
+  as single stroked centerline paths with an accurate stroke weight — no longer dual-boundary filled
+  ribbons — while text, hatching and wide shapes keep the filled treatment, so letters stay exactly
+  as legible as before. SVG, PDF and rasterized output all render the strokes with round caps and
+  joins, and the planar partition check still passes. On the Wright-flyer patent's ultra-thin
+  bracing wires and the HAER bridge sheet's 1-pixel dimension lines, every stroke is now one
+  editable vector path a CAD user can select, weight and snap — the core ask of issue #1.
 - **PDF input in the app.** You can now open or drop a PDF straight into Vecto. The first page is
   rasterized in memory at 600 DPI — the same crisp, no-smoothing treatment the CLI gives scanned
   drawings — and traced exactly like a loaded image, so Line art works out of the box. Multi-page
