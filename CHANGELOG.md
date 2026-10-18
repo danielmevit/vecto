@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **PDF input in the app.** You can now open or drop a PDF straight into Vecto. The first page is
+  rasterized in memory at 600 DPI — the same crisp, no-smoothing treatment the CLI gives scanned
+  drawings — and traced exactly like a loaded image, so Line art works out of the box. Multi-page
+  PDFs trace page 1 and tell you in the status line how many pages the document has (the CLI can
+  pick other pages). PDFs that are corrupted or too large to rasterize safely are refused with a
+  clear message, and whatever you had open stays untouched.
 - **PDF export.** Traced drawings can now be saved as true vector PDFs — real paths, not a picture
   inside a PDF. Use `vecto trace scan.pdf -o out.pdf` in the CLI (any `-o` path ending in `.pdf`) or
   the new **Export PDF…** button in the app. Pages come out at the traced size (1 px = 1 pt), holes
