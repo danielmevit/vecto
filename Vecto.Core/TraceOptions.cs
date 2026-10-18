@@ -59,5 +59,6 @@ public sealed class EffectiveParams
     public double AngleSnapDeg;       // flank directions this close to a 45° multiple snap exactly
     public double FitToleranceSq;     // px²
     public double PolygonEpsilon;
+    public bool CurveFitting;
     public int Seed;
 }

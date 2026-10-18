@@ -80,6 +80,32 @@ public static class PdfWriter
         sb.Append("h\n");
     }
 
+    /// <summary>Stroked centerline path: same operators, but h only closes true rings — an open
+    /// stroke must not gain a closing chord. Stroked, not filled, by the caller's S.</summary>
+    static void AppendStroke(StringBuilder sb, StrokePath stroke, int height)
+    {
+        P(sb, stroke.Segments[0].P0.X, height - stroke.Segments[0].P0.Y);
+        sb.Append(" m\n");
+        foreach (var seg in stroke.Segments)
+        {
+            if (seg.IsLine())
+            {
+                P(sb, seg.P3.X, height - seg.P3.Y);
+                sb.Append(" l\n");
+            }
+            else
+            {
+                P(sb, seg.P1.X, height - seg.P1.Y);
+                sb.Append(' ');
+                P(sb, seg.P2.X, height - seg.P2.Y);
+                sb.Append(' ');
+                P(sb, seg.P3.X, height - seg.P3.Y);
+                sb.Append(" c\n");
+            }
+        }
+        if (stroke.Closed) sb.Append("h\n");
+    }
+
     static void P(StringBuilder sb, double x, double y)
     {
         sb.Append(x.ToString("0.00", CultureInfo.InvariantCulture));

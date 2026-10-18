@@ -50,5 +50,23 @@ public static class SvgWriter
         sb.Append(" Z");
     }
 
+    /// <summary>Stroked centerline path: same command grammar, but Z only closes true rings —
+    /// an open stroke must not gain a closing chord.</summary>
+    static void AppendStroke(StringBuilder sb, StrokePath stroke)
+    {
+        sb.Append(" M ").Append(F(stroke.Segments[0].P0.X)).Append(' ').Append(F(stroke.Segments[0].P0.Y));
+        foreach (var seg in stroke.Segments)
+        {
+            if (seg.IsLine())
+                sb.Append(" L ").Append(F(seg.P3.X)).Append(' ').Append(F(seg.P3.Y));
+            else
+                sb.Append(" C ")
+                  .Append(F(seg.P1.X)).Append(' ').Append(F(seg.P1.Y)).Append(' ')
+                  .Append(F(seg.P2.X)).Append(' ').Append(F(seg.P2.Y)).Append(' ')
+                  .Append(F(seg.P3.X)).Append(' ').Append(F(seg.P3.Y));
+        }
+        if (stroke.Closed) sb.Append(" Z");
+    }
+
     static string F(double v) => v.ToString("0.00", CultureInfo.InvariantCulture);
 }

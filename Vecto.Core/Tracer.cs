@@ -24,12 +24,15 @@ public sealed class VectorDocument
     public required List<PaletteEntry> Palette { get; init; }
     /// <summary>Largest area first, so backgrounds paint below details regardless of renderer.</summary>
     public required List<RegionPath> Regions { get; init; }
+    /// <summary>Stroked centerline paths (LineArt thin line-work, VEC-50); painted after the fills.</summary>
+    public List<StrokePath> Strokes { get; init; } = [];
 }
 
 public sealed class TraceDiagnostics
 {
     public required EffectiveParams Params { get; init; }
     public int RegionCount { get; init; }
+    public int StrokeCount { get; init; }
     public int ChainCount { get; init; }
     public int NodeCount { get; init; }
     public long PaletteMs { get; init; }
@@ -112,6 +115,12 @@ public static class Tracer
                 p.MinRegionArea = noisyMin;
             }
         }
+        // LineArt only (VEC-50): thin line-work becomes stroked centerline paths; their pixels
+        // relabel to paper first, so the planar partition still tiles the canvas exactly
+        progress?.Invoke("centerline", 0.4);
+        var strokes = new List<StrokePath>();
+        if (p.Style == ImageStyle.LineArt)
+            strokes = Centerline.Extract(labels, palette, p, w, h, ct);
         var seg = Segmenter.Components(labels, w, h);
         long segmentMs = sw.ElapsedMilliseconds;
 
@@ -198,11 +207,12 @@ public static class Tracer
                 Loops = loops,
             });
         }
-        var doc = new VectorDocument { Width = w, Height = h, Palette = palette, Regions = regions };
+        var doc = new VectorDocument { Width = w, Height = h, Palette = palette, Regions = regions, Strokes = strokes };
         var diag = new TraceDiagnostics
         {
             Params = p,
             RegionCount = seg.RegionCount,
+            StrokeCount = strokes.Count,
             ChainCount = graph.Chains.Count,
             NodeCount = nodes,
             PaletteMs = paletteMs,
@@ -471,6 +481,7 @@ public static class Tracer
             FitToleranceSq = o.Detail switch { DetailLevel.Low => 1.0, DetailLevel.High => 0.09, _ => 0.25 },
             PolygonEpsilon = o.PolygonEpsilon >= 0 ? o.PolygonEpsilon
                 : o.Detail switch { DetailLevel.Low => 1.6, DetailLevel.High => 0.4, _ => 0.8 },
+            CurveFitting = o.CurveFitting,
             Seed = o.Seed,
         };
     }
