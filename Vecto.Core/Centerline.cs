@@ -26,6 +26,8 @@ public sealed class StrokePath
 /// else — glyphs, wide bars, hatching-scale blobs — keeps the filled-region treatment, and the
 /// pixels of centerline components are relabelled to paper so the planar partition still tiles
 /// the canvas exactly (the strokes paint on top; see docs/ai/research/2026-10-12-cad-mode-research.md).
+/// VEC-52 (stage 3) regularizes the chains into CAD primitives: corner-split runs become exact
+/// 2-anchor lines with 0/90/45° axis snapping, and circular strokes become exact arcs.
 /// </summary>
 public static class Centerline
 {
@@ -247,7 +249,7 @@ public static class Centerline
                 var poly = CornerPolygon.OptimalPolygon(pts, closed);
                 var corners = CornerPolygon.Corners(pts, closed, poly, p.CornerThresholdDeg);
                 ChainGeometry.SmoothInPlace(pts, closed, corners, 2, 0.5, 0.35);
-                segs = BezierFitter.FitChain(pts, closed, corners, StrokeFitTolSq(p));
+                segs = FitCadPrimitives(pts, closed, corners, width, p);
             }
             catch (InvalidOperationException)
             {
@@ -278,6 +280,167 @@ public static class Centerline
     const double StrokeFitFactor = 0.16;
 
     static double StrokeFitTolSq(EffectiveParams p) => Math.Max(0.01, p.FitToleranceSq * StrokeFitFactor);
+
+    // ---- VEC-52 stage 3: CAD regularization ----
+
+    /// <summary>Primitive hypothesis tolerance: this × the chain's stroke width. A
+    /// centerline that drifts less than half its width still paints the same ink (the
+    /// stroke is painted <see cref="StrokePath.Width"/> wide), so the simplest primitive
+    /// that explains the chain within it wins — a straight ink line becomes ONE 2-anchor
+    /// path instead of a Bezier chain following the scan's pixel wobble.</summary>
+    public const double FitWidthFactor = 0.5;
+    /// <summary>Clamps on the width-derived tolerance (px): a floor so 1-px strokes keep a
+    /// workable hypothesis, a cap so wide ones cannot drift a full half-width.</summary>
+    public const double FitTolMin = 0.25, FitTolMax = 1.25;
+    /// <summary>Directions this close to a 45° multiple snap exactly (Scan2CAD-style axis
+    /// snap): near-horizontal/vertical/diagonal lines come out at exactly 0/90/45°.</summary>
+    public const double CadAngleSnapDeg = 1.5;
+    /// <summary>Largest bow (quadratic residual trend, px) a straight run may have; above
+    /// it the run is an arc, not a noisy line (same convention as
+    /// <see cref="ChainGeometry.StraightRunMaxSag"/>).</summary>
+    public const double StraightRunMaxSag = 0.3;
+    /// <summary>Fewest interior points a run between pins needs before it can be claimed
+    /// straight (cf. <see cref="ChainGeometry.StraightRunMinPoints"/>, which boundary
+    /// chains need because their noise is JPEG ringing, not scan wobble).</summary>
+    public const int StraightRunMinPoints = 4;
+
+    static double LineTol(double width) => Math.Clamp(FitWidthFactor * width, FitTolMin, FitTolMax);
+
+    /// <summary>
+    /// Stage 3 of the CAD mode: the corner-split chain becomes CLEAN primitives. Chain
+    /// splitting reuses the corner machinery — <see cref="CornerPolygon.Corners"/> at the
+    /// style's <see cref="EffectiveParams.CornerThresholdDeg"/> (45° turn between
+    /// optimal-polygon edges, the same convention the boundary pipeline resolves for
+    /// LineArt), so high-curvature points are segment boundaries with sharp corners.
+    /// Corners are then relocated to the intersection of their flank lines with
+    /// <see cref="CadAngleSnapDeg"/> snapping — the same machinery region edges use — so
+    /// axis corners land exactly on both lines. Each run between pins is tested against a
+    /// total-least-squares line at the width-derived tolerance: accepted runs emit ONE
+    /// 2-anchor path (exactly axis-aligned when snapped); anything else goes to the Bezier
+    /// fitter at the same tolerance, whose simplest-model-first order gives circular
+    /// strokes the Kåsa arc hypothesis — exact arcs and whole circles.
+    /// </summary>
+    static List<CubicBezier> FitCadPrimitives(List<Vec2> pts, bool closed, List<int> corners, double width, EffectiveParams p)
+    {
+        // a corner may leave its pin by at most the line tolerance: centerline strokes are
+        // thin, and a corner pushed off the ink paints outside the scan
+        ChainGeometry.RelocateCorners(pts, closed, corners, Math.Min(p.CornerRelocateMaxShift, LineTol(width)), CadAngleSnapDeg);
+        double tol = LineTol(width);
+        double tolSq = Math.Max(StrokeFitTolSq(p), tol * tol);
+        int n = closed ? pts.Count - 1 : pts.Count;
+        var pins = corners.Distinct().OrderBy(i => i).ToList();
+        if (!closed)
+        {
+            pins.Insert(0, 0);
+            pins.Add(n - 1);
+            pins = pins.Distinct().OrderBy(i => i).ToList();
+        }
+        // no corner splits the chain: the whole thing is one hypothesis — a straight stroke
+        // becomes one line, anything else goes to the fitter (rings land on its arc path)
+        if (pins.Count < 2)
+            return BezierFitter.FitChain(pts, closed, [], tolSq);
+        // a closed ring with a single corner is still one cyclic run — keep the wrap-around
+        // tangent the closed fitter fits at the seam
+        if (closed && pins.Count == 1)
+            return BezierFitter.FitChain(pts, closed, [], tolSq);
+
+        var segs = new List<CubicBezier>();
+        int runs = closed ? pins.Count : pins.Count - 1;
+        for (int k = 0; k < runs; k++)
+        {
+            int a = pins[k];
+            int b = k + 1 < pins.Count ? pins[k + 1] : pins[0] + n;
+            if (b - a < 2)
+            {
+                segs.Add(CubicBezier.Line(pts[Wrap(a)], pts[Wrap(b)]));
+                continue;
+            }
+            if (StraightRunLine(pts, closed, a, b, n, tol) is { } line)
+            {
+                segs.Add(CubicBezier.Line(line.A, line.B));
+                continue;
+            }
+            var sub = new List<Vec2>(b - a + 1);
+            for (int i = a; i <= b; i++) sub.Add(pts[Wrap(i)]);
+            segs.AddRange(BezierFitter.FitChain(sub, false, [], tolSq));
+        }
+        return segs;
+
+        int Wrap(int i) => closed ? ((i % n) + n) % n : i;
+    }
+
+    /// <summary>
+    /// The 2-anchor line for one run between pins, or null when the run is not straight.
+    /// Total-least-squares fit of the run's interior (the vertex beside each pin is
+    /// excluded — smoothing damps it); the direction snaps to a 45° multiple within
+    /// <see cref="CadAngleSnapDeg"/>, and the run counts as straight only when every
+    /// interior point stays within tolerance of the snapped line AND the residuals show no
+    /// bow — a curve's signature. The endpoints are the pins projected onto the line, so
+    /// the emitted chord IS the snapped line: exactly 0/90/45° when it snapped.
+    /// </summary>
+    static (Vec2 A, Vec2 B)? StraightRunLine(List<Vec2> pts, bool closed, int a, int b, int n, double tol)
+    {
+        var idx = new List<int>();
+        for (int i = a + 1; i < b; i++) idx.Add(closed ? i % n : i);
+        if (idx.Count < StraightRunMinPoints) return null;
+        var fit = idx.Count >= 6 ? idx.GetRange(1, idx.Count - 2) : idx;
+        double mx = 0, my = 0;
+        foreach (var i in fit) { mx += pts[i].X; my += pts[i].Y; }
+        mx /= fit.Count;
+        my /= fit.Count;
+        double cxx = 0, cxy = 0, cyy = 0;
+        foreach (var i in fit)
+        {
+            double dx = pts[i].X - mx, dy = pts[i].Y - my;
+            cxx += dx * dx;
+            cxy += dx * dy;
+            cyy += dy * dy;
+        }
+        if (cxx + cyy < 1e-12) return null;
+        double theta = 0.5 * DetMath.Atan2(2 * cxy, cxx - cyy);
+        double deg = theta * (180.0 / Math.PI);
+        double snappedDeg = Math.Round(deg / 45.0) * 45.0;
+        if (Math.Abs(deg - snappedDeg) <= CadAngleSnapDeg) theta = snappedDeg * (Math.PI / 180.0);
+        var dir = new Vec2(DetMath.Cos(theta), DetMath.Sin(theta));
+        var nrm = new Vec2(-dir.Y, dir.X);
+        var c = new Vec2(mx, my);
+
+        double s0 = double.MaxValue, s1 = double.MinValue, worst = 0;
+        foreach (var i in idx)
+        {
+            var q = pts[i] - c;
+            double s = q.Dot(dir), r = q.Dot(nrm);
+            s0 = Math.Min(s0, s);
+            s1 = Math.Max(s1, s);
+            worst = Math.Max(worst, Math.Abs(r));
+        }
+        if (worst > tol) return null;
+        double half = (s1 - s0) / 2, mid = (s0 + s1) / 2;
+        if (half < 1e-9) return null;
+        // bow: fit r = α·u² + β·u + γ with u in [-1, 1]; |α| is the sagitta
+        double su0 = 0, su1 = 0, su2 = 0, su3 = 0, su4 = 0, sr0 = 0, sr1 = 0, sr2 = 0;
+        foreach (var i in idx)
+        {
+            var q = pts[i] - c;
+            double u = (q.Dot(dir) - mid) / half, r = q.Dot(nrm), u2 = u * u;
+            su0 += 1; su1 += u; su2 += u2; su3 += u2 * u; su4 += u2 * u2;
+            sr0 += r; sr1 += r * u; sr2 += r * u2;
+        }
+        double det = su4 * (su2 * su0 - su1 * su1) - su3 * (su3 * su0 - su1 * su2) + su2 * (su3 * su1 - su2 * su2);
+        if (Math.Abs(det) < 1e-12) return null;
+        double alpha = (sr2 * (su2 * su0 - su1 * su1) - su3 * (sr1 * su0 - su1 * sr0) + su2 * (sr1 * su1 - su2 * sr0)) / det;
+        if (Math.Abs(alpha) > StraightRunMaxSag) return null;
+
+        return (Project(pts[Wrap(a)]), Project(pts[Wrap(b)]));
+
+        Vec2 Project(Vec2 p)
+        {
+            var q = p - c;
+            return c + dir * q.Dot(dir);
+        }
+
+        int Wrap(int i) => closed ? ((i % n) + n) % n : i;
+    }
 
     /// <summary>
     /// The twin row pixel of an even-width stroke at (x,y): a 4-neighbour that is ink, not

@@ -28,8 +28,19 @@ public class CenterlineTests
 
     static double PathLength(StrokePath stroke)
     {
+        // flattened length (16 sub-samples per segment): exact for lines, converges for
+        // arcs — a chord sum would under-read the exact quarter-arc pieces of a circle
         double len = 0;
-        foreach (var seg in stroke.Segments) len += Math.Sqrt(seg.P3.DistSq(seg.P0));
+        foreach (var seg in stroke.Segments)
+        {
+            var prev = seg.P0;
+            for (int i = 1; i <= 16; i++)
+            {
+                var q = seg.Eval(i / 16.0);
+                len += Math.Sqrt(q.DistSq(prev));
+                prev = q;
+            }
+        }
         return len;
     }
 
@@ -171,5 +182,121 @@ public class CenterlineTests
         // the five glyphs and the bar are still filled ink regions (plus paper)
         Assert.Equal(7, doc.Regions.Count);
         Assert.Equal(2, doc.Palette.Count);
+    }
+
+    // ---- VEC-52 stage 3: CAD regularization ----
+
+    [Fact]
+    public void NoisyStraightLine_ExactlyTwoAnchors_EndpointsWithin1Px()
+    {
+        // 5-px stroke along y≈40 with a ±1 px scan wobble (a gentle sine, like real scan
+        // wobble): ONE 2-anchor path whose endpoints sit within 1 px of the true tips,
+        // not a chain of cubics following the wobble point-by-point
+        var img = Make(160, 80, (x, y) =>
+        {
+            int c = 40 + (int)Math.Round(Math.Sin(x * 0.3));
+            return x is >= 10 and <= 149 && Math.Abs(y - c) <= 2;
+        });
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        Assert.False(stroke.Closed);
+        var seg = Assert.Single(stroke.Segments);
+        Assert.True(seg.IsLine(0.05), "a straight stroke must be one line, not a curve");
+        Assert.True(Math.Abs(seg.P0.X - 10.5) <= 1.0, $"head x {seg.P0.X:0.00} vs 10.5");
+        Assert.True(Math.Abs(seg.P3.X - 149.5) <= 1.0, $"tail x {seg.P3.X:0.00} vs 149.5");
+        Assert.True(Math.Abs(seg.P0.Y - 40.5) <= 1.0 && Math.Abs(seg.P3.Y - 40.5) <= 1.0,
+            $"endpoints off the line: {seg.P0.Y:0.00}..{seg.P3.Y:0.00}");
+    }
+
+    [Fact]
+    public void NoisyAxisLine_SnapsExactlyHorizontal()
+    {
+        // a stroke drawn 0.4° off horizontal: within the 1.5° snap tolerance, so it must
+        // come out EXACTLY horizontal — the difference between a vector that looks like
+        // the scan and one a CAD user can edit
+        var img = Make(160, 80, (x, y) =>
+        {
+            int c = (int)Math.Round(40 + (x - 10) * Math.Tan(0.4 * Math.PI / 180));
+            return x is >= 10 and <= 149 && Math.Abs(y - c) <= 1;
+        });
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        var seg = Assert.Single(stroke.Segments);
+        Assert.True(seg.IsLine(0.05), "an axis stroke must be one line");
+        Assert.True(Math.Abs(seg.P3.Y - seg.P0.Y) < 1e-9,
+            $"axis snap failed: dy = {seg.P3.Y - seg.P0.Y:0.###}");
+        Assert.True(Math.Abs(seg.P3.X - seg.P0.X) > 100, "the stroke must span its length");
+    }
+
+    [Fact]
+    public void CircleStroke_ExactArc_CenterRadiusWithinTolerance()
+    {
+        // 3-px annulus r=14: one closed stroke whose pieces all sit on ONE exact circle
+        // (the Kåsa arc hypothesis), not a chain of cubics approximating it
+        var img = Make(64, 64, (x, y) =>
+        {
+            double d = Math.Sqrt((x - 31.5) * (x - 31.5) + (y - 31.5) * (y - 31.5));
+            return d is >= 12.5 and <= 15.5;
+        });
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        Assert.True(stroke.Closed, "a ring skeleton must trace as a closed stroke");
+        Assert.True(stroke.Segments.Count <= 8,
+            $"a full circle is 4 quarter-arc pieces, not {stroke.Segments.Count}");
+        // Kåsa fit of the anchor points: center within 1 px, radius within 0.75 px of truth
+        var anchors = new List<Vec2>();
+        foreach (var seg in stroke.Segments)
+        {
+            anchors.Add(seg.P0);
+            anchors.Add(seg.P3);
+        }
+        double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sxz = 0, syz = 0, sz = 0;
+        foreach (var p in anchors)
+        {
+            double z = p.X * p.X + p.Y * p.Y;
+            sx += p.X; sy += p.Y; sxx += p.X * p.X; syy += p.Y * p.Y; sxy += p.X * p.Y;
+            sxz += p.X * z; syz += p.Y * z; sz += z;
+        }
+        int n = anchors.Count;
+        double m00 = sxx, m01 = sxy, m02 = sx;
+        double m10 = sxy, m11 = syy, m12 = sy;
+        double m20 = sx, m21 = sy, m22 = n;
+        double det = m00 * (m11 * m22 - m12 * m21) - m01 * (m10 * m22 - m12 * m20) + m02 * (m10 * m21 - m11 * m20);
+        Assert.True(Math.Abs(det) > 1e-9, "anchors must not be collinear");
+        double detA = sxz * (m11 * m22 - m12 * m21) - m01 * (syz * m22 - m12 * sz) + m02 * (syz * m21 - m11 * sz);
+        double detB = m00 * (syz * m22 - m12 * sz) - sxz * (m10 * m22 - m12 * m20) + m02 * (m10 * sz - syz * m20);
+        double detC = m00 * (m11 * sz - syz * m21) - m01 * (m10 * sz - syz * m20) + sxz * (m10 * m21 - m11 * m20);
+        var center = new Vec2(detA / det / 2, detB / det / 2);
+        double radius = Math.Sqrt(detC / det + center.LengthSq);
+        Assert.True(center.DistSq(new Vec2(31.5, 31.5)) <= 1.0,
+            $"fitted center {center.X:0.00},{center.Y:0.00} vs 31.5,31.5");
+        Assert.True(Math.Abs(radius - 14.0) <= 0.75, $"fitted radius {radius:0.00} vs 14");
+        // and every anchor really sits on that circle (chain points carry the skeleton's
+        // ±0.3 px lattice residual — the Kasa fit averages, it does not interpolate)
+        foreach (var p in anchors)
+            Assert.True(Math.Abs((p - center).Length - radius) <= 0.35,
+                $"anchor off the fitted circle by {Math.Abs((p - center).Length - radius):0.00}");
+    }
+
+    [Fact]
+    public void AutoStyle_ByteIdentical_RegardlessOfCenterlineStage()
+    {
+        // VEC-52 may only touch the LineArt centerline path: Auto output must be
+        // byte-identical with the stage on or off, and contain no stroked path
+        var img = Make(64, 64, (x, y) => y is >= 30 and <= 32 && x is >= 8 and <= 55);
+        string withStage;
+        try
+        {
+            Centerline.Enabled = false;
+            string withoutStage = SvgWriter.Write(Tracer.Trace(img, new TraceOptions { Style = ImageStyle.Auto }).Document);
+            Centerline.Enabled = true;
+            withStage = SvgWriter.Write(Tracer.Trace(img, new TraceOptions { Style = ImageStyle.Auto }).Document);
+            Assert.Equal(withoutStage, withStage);
+        }
+        finally
+        {
+            Centerline.Enabled = true;
+        }
+        Assert.DoesNotContain("fill=\"none\"", withStage);
     }
 }
