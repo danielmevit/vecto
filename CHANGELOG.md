@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Line art strokes are now clean CAD primitives.** In Line art mode, a straight ink line is
+  now ONE path with exactly two anchor points (straight means straight — no pixel zig-zag),
+  a circle is one exact arc, and lines that merely touch or cross are welded back into single
+  strokes with endpoints snapped to true intersections. On the CAD benchmark, anchors per
+  stroke drop from 3.79 to 2.00 and stroke counts halve; every other style is byte-identical.
 - **Line art strokes are now real strokes (CAD Stage 2).** In Line art mode, thin ink strokes trace
   as single stroked centerline paths with an accurate stroke weight — no longer dual-boundary filled
   ribbons — while text, hatching and wide shapes keep the filled treatment, so letters stay exactly
