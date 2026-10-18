@@ -112,68 +112,88 @@ public class CenterlineTests
     [Fact]
     public void DEBUG_Dump()
     {
-        Centerline.DebugLog = new List<string>();
-        var line = Make(64, 64, (x, y) => y is >= 30 and <= 32 && x is >= 8 and <= 55);
-        var inkm = ScanPreprocess.InkMask(line);
-        var skel2 = Centerline.Ridge(inkm, Centerline.EdtSq(inkm, 64, 64), 64, 64);
-        for (int y = 28; y < 35; y++)
-        {
-            var row = new char[64];
-            for (int x = 5; x < 60; x++)
-                row[x] = skel2[y * 64 + x] ? '#' : inkm[y * 64 + x] ? '.' : ' ';
-            ((Action<string>)_output.WriteLine)(new string(row));
-        }
-        var linDoc = TraceLineArt(line);
-        ((Action<string>)_output.WriteLine)($"LINE strokes={linDoc.Strokes.Count}");
-        foreach (var s in Centerline.DebugLog) ((Action<string>)_output.WriteLine)(s);
-        Centerline.DebugLog.Clear();
         var (scan, mask) = SampleGen.CadScan();
-        var cadDoc = Tracer.Trace(scan, new TraceOptions { Style = ImageStyle.LineArt }).Document;
-        ((Action<string>)_output.WriteLine)($"CAD strokes={cadDoc.Strokes.Count} regions={cadDoc.Regions.Count}");
-        foreach (var s in Centerline.DebugLog.Take(60)) ((Action<string>)_output.WriteLine)(s);
-        Centerline.DebugLog.Clear();
-        var ring = Make(64, 64, (x, y) =>
+        Centerline.DebugLog = new List<string>();
+        VectorDocument doc;
+        try
         {
-            double d = Math.Sqrt((x - 31.5) * (x - 31.5) + (y - 31.5) * (y - 31.5));
-            return d is >= 12.5 and <= 15.5;
-        });
-        var ringInk = ScanPreprocess.InkMask(ring);
-        var ringSkel = Centerline.Ridge(ringInk, Centerline.EdtSq(ringInk, 64, 64), 64, 64);
-        for (int y = 0; y < 64; y++)
-        {
-            var row = new char[48];
-            for (int x = 0; x < 48; x++)
-                row[x] = ringSkel[y * 64 + x] ? '#' : ringInk[y * 64 + x] ? '.' : ' ';
-            ((Action<string>)_output.WriteLine)(new string(row));
+            doc = Tracer.Trace(scan, new TraceOptions { Style = ImageStyle.LineArt }).Document;
         }
-        var doc = TraceLineArt(ring);
-        ((Action<string>)_output.WriteLine)($"RING strokes={doc.Strokes.Count} regions={doc.Regions.Count}");
-        foreach (var s in Centerline.DebugLog!) ((Action<string>)_output.WriteLine)(s);
-        Centerline.DebugLog.Clear();
-        var diag = Make(64, 64, (x, y) => x >= 8 && x <= 56 && y == x - 8);
-        // reconstruct the exact mask the pipeline hands to Thin
-        var ink = ScanPreprocess.InkMask(diag);
-        ScanPreprocess.BridgeDiagonalContacts(ink, 64, 64);
-        var skel = Centerline.Ridge(ink, Centerline.EdtSq(ink, 64, 64), 64, 64);
-        ((Action<string>)_output.WriteLine)($"ink={ink.Count(b => b)} skel={skel.Count(b => b)}");
-        for (int y = 0; y < 64; y++)
+        catch (Exception ex)
         {
-            var row = new char[64];
-            for (int x = 0; x < 64; x++)
-                row[x] = skel[y * 64 + x] ? '#' : ink[y * 64 + x] ? '.' : ' ';
-            ((Action<string>)_output.WriteLine)(new string(row));
+            ((Action<string>)_output.WriteLine)("TRACE THREW: " + ex.Message);
+            foreach (var s in Centerline.DebugLog.TakeLast(30)) ((Action<string>)_output.WriteLine)(s);
+            Centerline.DebugLog = null;
+            return;
         }
-        doc = TraceLineArt(diag);
-        ((Action<string>)_output.WriteLine)($"DIAG strokes={doc.Strokes.Count} regions={doc.Regions.Count}");
-        foreach (var s in Centerline.DebugLog) ((Action<string>)_output.WriteLine)(s);
-        Centerline.DebugLog.Clear();
-        var cross = Make(64, 64, (x, y) =>
-            (y is >= 30 and <= 32 && x is >= 8 and <= 55) ||
-            (x is >= 30 and <= 32 && y is >= 8 and <= 55));
-        doc = TraceLineArt(cross);
-        ((Action<string>)_output.WriteLine)($"CROSS strokes={doc.Strokes.Count} regions={doc.Regions.Count}");
-        foreach (var s in Centerline.DebugLog) ((Action<string>)_output.WriteLine)(s);
         Centerline.DebugLog = null;
+        ((Action<string>)_output.WriteLine)($"strokes={doc.Strokes.Count} regions={doc.Regions.Count}");
+
+        // combined render, same counting as the benchmark
+        var mp0 = mask.Pixels;
+        var full = Rasterizer.Render(doc).Pixels;
+        long t0 = 0, b0 = 0, truth0 = 0;
+        for (int i = 0; i < mp0.Length; i += 4)
+        {
+            bool ti = mp0[i] < 128;
+            bool pi = full[i + 3] >= 128 && full[i] < 128;
+            if (ti) truth0++;
+            if (pi) t0++;
+            if (ti && pi) b0++;
+        }
+        ((Action<string>)_output.WriteLine)($"combined: truth={truth0} traced={t0} both={b0} recall={(double)b0 / truth0:0.###} precision={(double)b0 / t0:0.###}");
+
+        // strokes-only render: which strokes paint off-ink?
+        var strokesOnly = new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette, Regions = [], Strokes = doc.Strokes };
+        var rp = Rasterizer.Render(strokesOnly).Pixels;
+        var mp = mask.Pixels;
+        long strokePx = 0, strokeOnInk = 0;
+        for (int i = 0; i < mp.Length; i += 4)
+        {
+            bool painted = rp[i + 3] >= 128 && rp[i] < 128;
+            if (!painted) continue;
+            strokePx++;
+            if (mp[i] < 128) strokeOnInk++;
+        }
+        ((Action<string>)_output.WriteLine)($"stroke coverage={strokePx} on-ink={strokeOnInk} precision={(double)strokeOnInk / strokePx:0.###}");
+
+        // regions-only render
+        var regionsOnly = new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette, Regions = doc.Regions, Strokes = [] };
+        var rr = Rasterizer.Render(regionsOnly).Pixels;
+        long regPx = 0, regOnInk = 0;
+        for (int i = 0; i < mp.Length; i += 4)
+        {
+            bool painted = rr[i + 3] >= 128 && rr[i] < 128;
+            if (!painted) continue;
+            regPx++;
+            if (mp[i] < 128) regOnInk++;
+        }
+        ((Action<string>)_output.WriteLine)($"region coverage={regPx} on-ink={regOnInk} precision={(regPx == 0 ? 0 : (double)regOnInk / regPx):0.###}");
+
+        // per-stroke: length, width, on-ink fraction of its own coverage
+        for (int s = 0; s < doc.Strokes.Count; s++)
+        {
+            var one = new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette, Regions = [], Strokes = [doc.Strokes[s]] };
+            var sp = Rasterizer.Render(one).Pixels;
+            long px = 0, on = 0;
+            for (int i = 0; i < mp.Length; i += 4)
+            {
+                bool painted = sp[i + 3] >= 128 && sp[i] < 128;
+                if (!painted) continue;
+                px++;
+                if (mp[i] < 128) on++;
+            }
+            double len = 0;
+            foreach (var seg in doc.Strokes[s].Segments) len += Math.Sqrt(seg.P3.DistSq(seg.P0));
+            ((Action<string>)_output.WriteLine)(
+                $"stroke {s,2}: len={len,7:0.0} w={doc.Strokes[s].Width,4:0.0} closed={doc.Strokes[s].Closed} px={px} onInk={on} prec={(px == 0 ? 0 : (double)on / px):0.###}");
+        }
+        for (int r = 0; r < doc.Regions.Count; r++)
+        {
+            var reg = doc.Regions[r];
+            var c = doc.Palette[reg.PaletteIndex].Color;
+            ((Action<string>)_output.WriteLine)($"region {r,2}: area={reg.Area,6} color=#{c.R:x2}{c.G:x2}{c.B:x2}");
+        }
     }
 
     [Fact]

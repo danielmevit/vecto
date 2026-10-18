@@ -112,7 +112,7 @@ public static class Centerline
                 int i = y * w + x;
                 if (!skel[i]) continue;
                 double width = 2 * Math.Sqrt(dtSq[i]) - 1;
-                if (Twin(skel, inkMask, dtSq, x, y, i, w, h)) width += 1;
+                if (Twin(skel, inkMask, dtSq, x, y, i, w, h) >= 0) width += 1;
                 widthAt[i] = width;
                 allWidths.Add(width);
             }
@@ -148,7 +148,7 @@ public static class Centerline
             foreach (int q in tracer.BridgeGaps(c.Pixels, BridgeDist))
             {
                 double width = 2 * Math.Sqrt(dtSq[q]) - 1;
-                if (Twin(skel, inkMask, dtSq, q % w, q / w, q, w, h)) width += 1;
+                if (Twin(skel, inkMask, dtSq, q % w, q / w, q, w, h) >= 0) width += 1;
                 widthAt[q] = width;
             }
             foreach (var (pixels, closed) in tracer.Trace(c.Pixels))
@@ -165,7 +165,7 @@ public static class Centerline
                     foreach (int q in pixels) widths.Add(widthAt[q]);
                 }
                 if (widths.Count == 0) continue;
-                var stroke = BuildStroke(pixels, closed, Median(widths), ink, p, w);
+                var stroke = BuildStroke(pixels, closed, Median(widths), ink, p, w, h, skel, inkMask, dtSq);
                 if (stroke != null)
                 {
                     strokes.Add(stroke);
@@ -224,11 +224,23 @@ public static class Centerline
         return gap >= 0 && gap <= 4 * Math.Max(ha, hb);
     }
 
-    /// <summary>Pixel centres to fitted curve, through the same corner/smooth/fit stage boundary chains use.</summary>
-    static StrokePath? BuildStroke(List<int> pixels, bool closed, double width, int ink, EffectiveParams p, int w)
+    /// <summary>Pixel centres to fitted curve, through the same corner/smooth/fit stage boundary chains use.
+    /// A pixel with a twin row shifts half a pixel toward it, so the centre line of an
+    /// even-width stroke runs between its two rows instead of along one of them.</summary>
+    static StrokePath? BuildStroke(List<int> pixels, bool closed, double width, int ink, EffectiveParams p, int w, int h, bool[] skel, bool[] inkMask, int[] dtSq)
     {
         var pts = new List<Vec2>(pixels.Count + 1);
-        foreach (int i in pixels) pts.Add(new Vec2(i % w + 0.5, i / w + 0.5));
+        foreach (int i in pixels)
+        {
+            double px = i % w + 0.5, py = i / w + 0.5;
+            int twin = Twin(skel, inkMask, dtSq, i % w, i / w, i, w, h);
+            if (twin >= 0)
+            {
+                px += 0.5 * Math.Sign(twin % w - i % w);
+                py += 0.5 * Math.Sign(twin / w - i / w);
+            }
+            pts.Add(new Vec2(px, py));
+        }
         if (closed) pts.Add(pts[0]);
         List<CubicBezier> segs;
         if (p.CurveFitting)
@@ -248,14 +260,33 @@ public static class Centerline
         return new StrokePath { PaletteIndex = ink, Width = width, Closed = closed, Segments = segs };
     }
 
-    static bool Twin(bool[] skel, bool[] ink, int[] dtSq, int x, int y, int i, int w, int h)
+    /// <summary>
+    /// The twin row pixel of an even-width stroke at (x,y): a 4-neighbour that is ink, not
+    /// skeleton, with equal DT — and that twin itself has such a neighbour besides (x,y),
+    /// i.e. the twins form a 4-connected parallel row. The isolated equal-DT ink pixel a
+    /// diagonal bridge leaves beside a 1-px staircase has no such partner, so thin diagonals
+    /// and curves keep their true width instead of doubling. Returns -1 when there is no twin.
+    /// </summary>
+    static int Twin(bool[] skel, bool[] ink, int[] dtSq, int x, int y, int i, int w, int h)
     {
-        return At(x - 1, y, i - 1) || At(x + 1, y, i + 1) || At(x, y - 1, i - w) || At(x, y + 1, i + w);
+        if (At(x - 1, y, i - 1, out int t)) return t;
+        if (At(x + 1, y, i + 1, out t)) return t;
+        if (At(x, y - 1, i - w, out t)) return t;
+        if (At(x, y + 1, i + w, out t)) return t;
+        return -1;
 
-        bool At(int xx, int yy, int q)
+        bool At(int xx, int yy, int q, out int twin)
         {
+            twin = q;
             if ((uint)xx >= (uint)w || (uint)yy >= (uint)h) return false;
-            return ink[q] && !skel[q] && dtSq[q] == dtSq[i];
+            if (!ink[q] || skel[q] || dtSq[q] != dtSq[i]) return false;
+            return RowTwin(xx - 1, yy, q - 1, q) || RowTwin(xx + 1, yy, q + 1, q) || RowTwin(xx, yy - 1, q - w, q) || RowTwin(xx, yy + 1, q + w, q);
+        }
+
+        bool RowTwin(int xx, int yy, int q, int except)
+        {
+            if ((uint)xx >= (uint)w || (uint)yy >= (uint)h || q == except) return false;
+            return ink[q] && !skel[q] && dtSq[q] == dtSq[except];
         }
     }
 
@@ -364,9 +395,15 @@ public static class Centerline
     }
 
     /// <summary>
-    /// Deletes, in raster order, every pixel with ≥3 skeleton neighbours whose neighbours stay
-    /// 8-connected without it; pixels with ≤2 neighbours (chain middles, stroke ends) are never
-    /// touched. Repeats until stable, so plateaus collapse to 1-px chains.
+    /// Reduces the raw ridge to 1-px chains. Phase 1 deletes, in raster order, every pixel with
+    /// ≥3 skeleton neighbours whose neighbours stay 8-connected without it, repeating until
+    /// stable, so plateaus (twin rows of even-width strokes, staircase strips) collapse.
+    /// Phase 2 then deletes the third corner of every triangle — a pixel whose exactly two
+    /// neighbours are 8-adjacent to each other. Triangle cycles are ridge artifacts at octant
+    /// transitions; left in place they read as junctions, and spur pruning then eats the real
+    /// stroke arms attached to them. Phase 2 must run after phase 1: inside a plateau every
+    /// pixel has two adjacent neighbours, so the triangle rule would cascade down the whole
+    /// band. The phases repeat until neither removes anything.
     /// </summary>
     public static void Cleanup(bool[] skel, int w, int h)
     {
@@ -382,7 +419,42 @@ public static class Centerline
                     skel[i] = false;
                     removed = true;
                 }
+            bool triangles = true;
+            while (triangles)
+            {
+                triangles = false;
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = y * w + x;
+                        if (!skel[i] || Neighbors8(skel, x, y, w, h) != 2 || !Triangle(skel, x, y, w, h)) continue;
+                        skel[i] = false;
+                        triangles = true;
+                    }
+            }
         }
+    }
+
+    /// <summary>
+    /// True when (x,y) has exactly two skeleton neighbours that are 8-adjacent to each other:
+    /// the pixel is the third corner of a triangle, so deleting it keeps the graph connected
+    /// (the neighbours join directly). Triangle cycles are ridge artifacts at octant
+    /// transitions — left in place they read as junctions, and spur pruning then eats the
+    /// real stroke arms attached to them.
+    /// </summary>
+    static bool Triangle(bool[] skel, int x, int y, int w, int h)
+    {
+        int ax = -1, ay = -1, bx = -1, by = -1;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                if (dx == 0 && dy == 0) continue;
+                int xx = x + dx, yy = y + dy;
+                if ((uint)xx >= (uint)w || (uint)yy >= (uint)h || !skel[yy * w + xx]) continue;
+                if (ax < 0) { ax = xx; ay = yy; }
+                else { bx = xx; by = yy; }
+            }
+        return Math.Abs(ax - bx) <= 1 && Math.Abs(ay - by) <= 1;
     }
 
     static int Neighbors8(bool[] skel, int x, int y, int w, int h)
