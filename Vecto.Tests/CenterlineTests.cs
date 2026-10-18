@@ -106,6 +106,37 @@ public class CenterlineTests
     }
 
     [Fact]
+    public void KnownWidthDiagonal45_SingleStrokeWithAccurateWidth()
+    {
+        // 45-degree band, three diagonal rows (x 8..56, |y-(x-8)| <= 1): the last
+        // synthetic from the VEC-50 spec. Perpendicular truth: width 3/sqrt(2) = 2.12,
+        // length 48*sqrt(2) = 67.9 — the staircase must not read wider than the band
+        var img = Make(64, 64, (x, y) => x is >= 8 and <= 56 && Math.Abs(y - (x - 8)) <= 1);
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        Assert.False(stroke.Closed);
+        Assert.True(Math.Abs(stroke.Width - 3.0 / Math.Sqrt(2)) <= 0.5,
+            $"width {stroke.Width:0.00} vs {3.0 / Math.Sqrt(2):0.00}");
+        Assert.True(Math.Abs(PathLength(stroke) - 48.0 * Math.Sqrt(2)) <= 3.0,
+            $"length {PathLength(stroke):0.0} vs {48.0 * Math.Sqrt(2):0.0}");
+        // the centreline follows the diagonal: every BODY segment runs at ~45 degrees.
+        // The staircase tips may wobble over a pixel (a short near-vertical jog where the
+        // band ends) — round caps cover that; only a drifting body would smear the stroke
+        foreach (var seg in stroke.Segments)
+        {
+            if (seg.P3.DistSq(seg.P0) < 4.0) continue;
+            double dx = Math.Abs(seg.P3.X - seg.P0.X), dy = Math.Abs(seg.P3.Y - seg.P0.Y);
+            Assert.True(Math.Abs(dx - dy) <= 0.5, $"segment not diagonal: dx={dx:0.00} dy={dy:0.00}");
+        }
+        // and the stroke actually spans the band, tip to tip
+        var head = stroke.Segments[0].P0;
+        var tail = stroke.Segments[^1].P3;
+        Assert.True(head.DistSq(new Vec2(8.5, 0.5)) <= 6.5, $"head at {head.X:0.0},{head.Y:0.0}");
+        Assert.True(tail.DistSq(new Vec2(56.5, 48.5)) <= 6.5, $"tail at {tail.X:0.0},{tail.Y:0.0}");
+        Assert.Single(doc.Regions);
+    }
+
+    [Fact]
     public void EvenWidthLine_CentersBetweenTwinRows()
     {
         // 2-px vertical band, cols 30-31, y 8..55: the twin-row shift must put the
