@@ -44,6 +44,10 @@ public static class Centerline
     /// <summary>…and sit in a row of at least this many same-size peers (Fletcher–Kasturi text rows).</summary>
     public const int TextPeerMin = 4;
 
+    /// <summary>TODO(VEC-50): master switch — off until the excess-ink quality fix lands
+    /// (CAD benchmark precision 0.761 &lt; 0.95) and the writers emit strokes.</summary>
+    public static readonly bool Enabled = false;
+
     /// <summary>
     /// The LineArt centerline stage: classifies ink components, replaces the line-like ones with
     /// stroked paths and relabels their pixels to paper (in place) so the region pipeline never
@@ -51,7 +55,7 @@ public static class Centerline
     /// </summary>
     internal static List<StrokePath> Extract(int[] labels, List<PaletteEntry> palette, EffectiveParams p, int w, int h, CancellationToken ct)
     {
-        if (palette.Count < 2) return [];
+        if (!Enabled) return [];
         int ink = 0, paper = 0;
         for (int c = 1; c < palette.Count; c++)
         {
