@@ -376,4 +376,150 @@ public class CenterlineTests
         }
         Assert.DoesNotContain("fill=\"none\"", withStage);
     }
+
+    // ---- VEC-52d: angle rationalization (round-angle grid + parallel relationships) ----
+
+    /// <summary>Paints a ~3-px band along a line at <paramref name="angleDeg"/> with a
+    /// gentle sine wobble along the normal (deterministic scan noise), like the prototype's
+    /// make_chain: discs of radius 1.5 stepped along the line.</summary>
+    static void PaintLine(RasterImage img, double x0, double y0, double angleDeg, double len,
+        double amp, double waveLen)
+    {
+        double ang = angleDeg * Math.PI / 180.0;
+        double dx = Math.Cos(ang), dy = Math.Sin(ang), nx = -dy, ny = dx;
+        for (double t = 0; t <= len; t += 0.2)
+        {
+            double off = amp * Math.Sin(2 * Math.PI * t / waveLen);
+            double cx = x0 + t * dx + off * nx, cy = y0 + t * dy + off * ny;
+            for (int py = (int)Math.Floor(cy - 2); py <= (int)Math.Ceiling(cy + 2); py++)
+                for (int px = (int)Math.Floor(cx - 2); px <= (int)Math.Ceiling(cx + 2); px++)
+                {
+                    if (px < 0 || py < 0 || px >= img.Width || py >= img.Height) continue;
+                    double ex = px + 0.5 - cx, ey = py + 0.5 - cy;
+                    if (ex * ex + ey * ey <= 2.25) img.SetPixel(px, py, Black);
+                }
+        }
+    }
+
+    /// <summary>The stroke's line direction as an angle in [0, 180): a stroke and its
+    /// reverse share one direction, so 179.999° reads as 179.999, not −0.001.</summary>
+    static double DirDeg(StrokePath stroke)
+    {
+        var seg = stroke.Segments[0];
+        double deg = Math.Atan2(seg.P3.Y - seg.P0.Y, seg.P3.X - seg.P0.X) * 180.0 / Math.PI % 180.0;
+        return deg < 0 ? deg + 180.0 : deg;
+    }
+
+    [Fact]
+    public void Noisy30degLine_SnapsExactlyToGrid()
+    {
+        // 30° is on the 15° grid: a wobbly scan of a 30° line must come out at EXACTLY
+        // 30.00° — one 2-anchor line, not the measured 29.x with its scan error
+        var img = Make(200, 120, (x, y) => false);
+        PaintLine(img, 25, 30, 30.0, 140, 0.6, 21);
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        Assert.False(stroke.Closed);
+        var seg = Assert.Single(stroke.Segments);
+        Assert.True(seg.IsLine(0.05), "a straight stroke must be one line");
+        Assert.True(Math.Abs(DirDeg(stroke) - 30.0) <= 1e-6, $"angle {DirDeg(stroke):0.000} vs 30");
+    }
+
+    [Fact]
+    public void Noisy15degLine_SnapsExactlyToGrid()
+    {
+        // the grid extends past the old 45° family: 15° is a snap angle now
+        var img = Make(200, 120, (x, y) => false);
+        PaintLine(img, 25, 40, 15.0, 140, 0.6, 21);
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        var seg = Assert.Single(stroke.Segments);
+        Assert.True(seg.IsLine(0.05), "a straight stroke must be one line");
+        Assert.True(Math.Abs(DirDeg(stroke) - 15.0) <= 1e-6, $"angle {DirDeg(stroke):0.000} vs 15");
+    }
+
+    [Fact]
+    public void Noisy60_8degLine_SnapsExactlyToGrid60()
+    {
+        // drawn at 60.8°: within the 1.5° grid tolerance of 60, so exactly 60.00°
+        var img = Make(200, 160, (x, y) => false);
+        PaintLine(img, 30, 20, 60.8, 120, 0.6, 21);
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        var seg = Assert.Single(stroke.Segments);
+        Assert.True(seg.IsLine(0.05), "a straight stroke must be one line");
+        Assert.True(Math.Abs(DirDeg(stroke) - 60.0) <= 1e-6, $"angle {DirDeg(stroke):0.000} vs 60");
+    }
+
+    [Fact]
+    public void OffGridLine_62_7_RoundsToWhole63()
+    {
+        // the owner's case: a line measuring 62.7° is a 63° line with scan error — 62.7
+        // is 2.7° off the grid so nothing snaps; the whole-degree round IS the intent
+        var img = Make(200, 160, (x, y) => false);
+        PaintLine(img, 30, 25, 62.7, 120, 0.6, 21);
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        var seg = Assert.Single(stroke.Segments);
+        Assert.True(seg.IsLine(0.05), "a straight stroke must be one line");
+        Assert.True(Math.Abs(DirDeg(stroke) - 63.0) <= 1e-6, $"angle {DirDeg(stroke):0.000} vs 63");
+    }
+
+    [Fact]
+    public void OffGridLine_17_2_KeepsWhole17_NotForcedTo15()
+    {
+        // 17.2° is 2.2° off the 15° grid: it keeps its measured WHOLE degree (17) and
+        // must NOT be dragged onto the grid — the tolerance is the only guard
+        var img = Make(200, 120, (x, y) => false);
+        PaintLine(img, 25, 40, 17.2, 140, 0.6, 21);
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        var seg = Assert.Single(stroke.Segments);
+        Assert.True(seg.IsLine(0.05), "a straight stroke must be one line");
+        double ang = DirDeg(stroke);
+        Assert.True(Math.Abs(ang - 17.0) <= 1e-6, $"angle {ang:0.000} vs 17");
+        Assert.True(Math.Abs(ang - 15.0) > 0.5, "an off-grid line must not be forced onto the grid");
+    }
+
+    [Fact]
+    public void NearSeamLine_179_9_ComesOutExactly0()
+    {
+        // a 179.9° line IS a 0° line: the 0/180 seam is handled everywhere, so a stroke
+        // just under horizontal comes out exactly horizontal
+        var img = Make(200, 120, (x, y) => false);
+        PaintLine(img, 150, 60, 179.9, 120, 0.6, 21);
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        var seg = Assert.Single(stroke.Segments);
+        Assert.True(seg.IsLine(0.05), "a straight stroke must be one line");
+        Assert.True(Math.Abs(seg.P3.Y - seg.P0.Y) < 1e-9,
+            $"seam wrap failed: dy = {seg.P3.Y - seg.P0.Y:0.###}");
+    }
+
+    [Fact]
+    public void ParallelFamily_23_5_UnifiesToSingleAngle()
+    {
+        // three lines drawn at 23.3/23.5/23.6° — ONE intended angle: the cluster's
+        // circular mean unifies them, so all three come out at one whole-degree angle,
+        // mutually parallel (the drawing stays self-consistent)
+        var img = Make(220, 200, (x, y) => false);
+        PaintLine(img, 20, 20, 23.3, 135, 0.6, 21);
+        PaintLine(img, 20, 75, 23.5, 135, 0.6, 21);
+        PaintLine(img, 20, 130, 23.6, 135, 0.6, 21);
+        var doc = TraceLineArt(img);
+        Assert.Equal(3, doc.Strokes.Count);
+        double a0 = DirDeg(doc.Strokes[0]);
+        foreach (var stroke in doc.Strokes)
+        {
+            Assert.False(stroke.Closed);
+            var seg = Assert.Single(stroke.Segments);
+            Assert.True(seg.IsLine(0.05), "each family member must be one line");
+            Assert.True(Math.Abs(DirDeg(stroke) - a0) <= 1e-9,
+                $"family not unified: {a0:0.000} vs {DirDeg(stroke):0.000}");
+            Assert.True(Math.Abs(DirDeg(stroke) - Math.Round(DirDeg(stroke))) <= 1e-9,
+                $"the unified angle must be a whole degree, got {DirDeg(stroke):0.000}");
+        }
+        Assert.True(Math.Abs(a0 - 23.5) <= 1.0,
+            $"unified angle {a0:0.000} drifted away from the drawn family");
+    }
 }

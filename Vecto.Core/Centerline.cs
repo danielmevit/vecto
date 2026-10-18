@@ -30,6 +30,9 @@ public sealed class StrokePath
 /// 2-anchor lines with 0/90/45° axis snapping, and circular strokes become exact arcs. A
 /// junction pass then welds the collinear pieces a crossing or a scan gap split off one
 /// straight stroke, and snaps line endpoints to the exact line-line intersections.
+/// VEC-52d finally rationalizes the straight lines' angles to drafting intent: parallel
+/// families unify on one angle, near-grid angles snap onto the 15° grid, and everything
+/// else rounds to a whole degree.
 /// </summary>
 public static class Centerline
 {
@@ -186,6 +189,7 @@ public static class Centerline
         // then land every line endpoint that ends against another line on the exact
         // intersection — the strokes a CAD user sees cross and meet cleanly
         MergeCollinearAcrossJunctions(strokes);
+        RationalizeLineAngles(strokes);
         SnapEndsToIntersections(strokes);
         return strokes;
     }
@@ -383,6 +387,17 @@ public static class Centerline
     /// <summary>Directions this close to a 45° multiple snap exactly (Scan2CAD-style axis
     /// snap): near-horizontal/vertical/diagonal lines come out at exactly 0/90/45°.</summary>
     public const double CadAngleSnapDeg = 1.5;
+    /// <summary>Two straight strokes whose directions agree within this (deg, wrap-aware)
+    /// are the same INTENDED angle: one cluster, one final angle — a drawing's parallel
+    /// lines come out exactly parallel (VEC-52d; the model is prototyped and validated in
+    /// coord/artifacts/prototype-angles/angle_proto.py).</summary>
+    public const double AngleClusterTolDeg = 1.0;
+    /// <summary>The drafting grid (deg): a cluster angle within <see cref="AngleGridSnapDeg"/>
+    /// of a multiple of this snaps there exactly (0/15/30/45/60/75/90…).</summary>
+    public const double AngleGridStepDeg = 15.0;
+    /// <summary>Cluster angle this close (deg, wrap-aware) to a grid multiple snaps to it;
+    /// everything else keeps its measured WHOLE degree — nothing off the grid is forced onto it.</summary>
+    public const double AngleGridSnapDeg = 1.5;
     /// <summary>Largest bow (quadratic residual trend, px) a straight run may have; above
     /// it the run is an arc, not a noisy line (same convention as
     /// <see cref="ChainGeometry.StraightRunMaxSag"/>).</summary>
@@ -555,6 +570,103 @@ public static class Centerline
                         head ? CubicBezier.Line(best, inner) : CubicBezier.Line(inner, best);
             }
         }
+    }
+
+    /// <summary>
+    /// Stage 3 angle rationalization (VEC-52d), the owner's angle-intent model: a measured
+    /// angle that lands near a round value IS that round value with scan error. The
+    /// straight 2-anchor strokes first CLUSTER — directions that agree within
+    /// <see cref="AngleClusterTolDeg"/> (wrap-aware: a 179.999° line IS a 0° line) are one
+    /// intended angle, and every member takes the cluster's circular mean, so a drawing's
+    /// parallel lines come out exactly parallel. Each cluster angle then snaps to the
+    /// <see cref="AngleGridStepDeg"/> grid within <see cref="AngleGridSnapDeg"/>
+    /// (0/15/30/45…), and everything else rounds to the nearest WHOLE degree — drawings
+    /// dimension in whole degrees, and a genuinely off-grid line keeps its measured whole
+    /// degree (17.2° → 17, never 15). Each line is rebuilt at its final angle through the
+    /// chord midpoint at the fitted length; the intersection pass afterwards re-lands the
+    /// endpoints that end against other lines. Straight single-line strokes only — arcs,
+    /// rings and corner-split polylines keep their fitted geometry. Deterministic:
+    /// clusters seed at the lowest unused stroke in scan order.
+    /// </summary>
+    static void RationalizeLineAngles(List<StrokePath> strokes)
+    {
+        var lines = new List<int>();
+        for (int s = 0; s < strokes.Count; s++)
+        {
+            var st = strokes[s];
+            if (st.Closed || st.Segments.Count != 1 || !st.Segments[0].IsLine(0.05)) continue;
+            if ((st.Segments[0].P3 - st.Segments[0].P0).LengthSq < 4) continue;
+            lines.Add(s);
+        }
+        if (lines.Count == 0) return;
+        var ang = new double[lines.Count];
+        for (int k = 0; k < lines.Count; k++)
+        {
+            var g = strokes[lines[k]].Segments[0];
+            ang[k] = LineDirDeg(g.P0, g.P3);
+        }
+        var used = new bool[lines.Count];
+        var final = new double[lines.Count];
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (used[i]) continue;
+            used[i] = true;
+            var cluster = new List<int> { i };
+            for (int j = i + 1; j < lines.Count; j++)
+                if (!used[j] && DirDistDeg(ang[i], ang[j]) <= AngleClusterTolDeg)
+                {
+                    cluster.Add(j);
+                    used[j] = true;
+                }
+            // circular mean of line directions: double the angles, average, halve
+            double x = 0, y = 0;
+            foreach (var k in cluster)
+            {
+                x += Math.Cos(2 * ang[k] * Math.PI / 180.0);
+                y += Math.Sin(2 * ang[k] * Math.PI / 180.0);
+            }
+            double mean = Math.Atan2(y, x) * (180.0 / Math.PI) / 2 % 180.0;
+            if (mean < 0) mean += 180.0;
+            double grid = Math.Round(mean / AngleGridStepDeg) * AngleGridStepDeg % 180.0;
+            double f = DirDistDeg(mean, grid) <= AngleGridSnapDeg ? grid : Math.Round(mean) % 180.0;
+            foreach (var k in cluster) final[k] = f;
+        }
+        for (int k = 0; k < lines.Count; k++)
+        {
+            var g = strokes[lines[k]].Segments[0];
+            double cur = Math.Atan2(g.P3.Y - g.P0.Y, g.P3.X - g.P0.X) * (180.0 / Math.PI);
+            // the final angle is a line direction (mod 180): rotate toward the directed
+            // target nearest the stroke's current heading, so nothing flips end for end
+            double target = Math.Abs(TurnDeg(cur, final[k])) <= Math.Abs(TurnDeg(cur, final[k] + 180.0))
+                ? final[k] : final[k] + 180.0;
+            double rad = target * Math.PI / 180.0;
+            var dir = new Vec2(Math.Cos(rad), Math.Sin(rad));
+            var mid = new Vec2((g.P0.X + g.P3.X) / 2, (g.P0.Y + g.P3.Y) / 2);
+            double half = (g.P3 - g.P0).Length / 2;
+            strokes[lines[k]].Segments[0] = CubicBezier.Line(mid - dir * half, mid + dir * half);
+        }
+    }
+
+    /// <summary>Direction of the line through a→b as a line angle in [0, 180): the heading
+    /// mod 180, so a stroke and its reverse share one direction.</summary>
+    static double LineDirDeg(Vec2 a, Vec2 b)
+    {
+        double deg = Math.Atan2(b.Y - a.Y, b.X - a.X) * (180.0 / Math.PI) % 180.0;
+        return deg < 0 ? deg + 180.0 : deg;
+    }
+
+    /// <summary>Angular distance between two line directions (mod 180, wrap-aware).</summary>
+    static double DirDistDeg(double a, double b)
+    {
+        double d = Math.Abs(a - b) % 180.0;
+        return Math.Min(d, 180.0 - d);
+    }
+
+    /// <summary>Signed turn from one heading to another, in (-180, 180].</summary>
+    static double TurnDeg(double from, double to)
+    {
+        double d = (to - from) % 360.0;
+        return d < -180.0 ? d + 360.0 : d > 180.0 ? d - 360.0 : d;
     }
 
     /// <summary>
