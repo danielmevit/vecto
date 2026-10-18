@@ -18,7 +18,8 @@
                     <Button Content="Export SVG…" Click="OnExport" IsEnabled="{Binding HasResult}"
                             Style="{StaticResource AccentButton}" Margin="0,0,6,0"/>
                     <Button Content="Copy SVG" Click="OnCopySvg" IsEnabled="{Binding HasResult}" Margin="0,0,6,0"/>
-                    <Button Content="Export PNG…" Click="OnExportPng" IsEnabled="{Binding HasResult}"/>
+                    <Button Content="Export PNG…" Click="OnExportPng" IsEnabled="{Binding HasResult}" Margin="0,0,6,0"/>
+                    <Button Content="Export PDF…" Click="OnExportPdf" IsEnabled="{Binding HasResult}"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
                     <ComboBox SelectedIndex="{Binding RightMode}" Width="128" Margin="0,0,16,0" VerticalAlignment="Center">

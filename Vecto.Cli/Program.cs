@@ -154,7 +154,10 @@ internal static class Program
                     : baseNoExt + ".svg");
                 var img = page.Image;
                 var res = Tracer.Trace(img, opt);
-                File.WriteAllText(outPath, SvgWriter.Write(res.Document));
+                if (Path.GetExtension(outPath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+                    PdfWriter.Write(res.Document, outPath);
+                else
+                    File.WriteAllText(outPath, SvgWriter.Write(res.Document));
                 Console.WriteLine(FormattableString.Invariant(
                     $"{Path.GetFileName(input)}{(pages.Count > 1 ? $"[{page.Number}]" : "")} -> {outPath}  ({res.Diagnostics.TotalMs} ms, {res.Document.Palette.Count} colors, {res.Diagnostics.RegionCount} regions, {res.Diagnostics.NodeCount} nodes)"));
                 if (segPng != null)
@@ -400,7 +403,8 @@ internal static class Program
                                                 original vector, trace it, diff the result
 
             options:
-              -o, --out <file>      output SVG path, single input only (default: input with .svg)
+              -o, --out <file>      output path; .pdf writes a vector PDF, anything else
+                                    SVG (default: input with .svg), single input only
               --out-dir <dir>       output directory for batches (default: next to each input)
               --colors <n|auto>     fixed palette size, or automatic (default auto)
               --max-colors <n>      cap for automatic palette (default 16)

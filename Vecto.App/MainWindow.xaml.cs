@@ -180,6 +180,27 @@ public partial class MainWindow : Window
         ViewModel.Status = "Exported " + dlg.FileName;
     }
 
+    void OnExportPdf(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Document is not { } doc) return;
+        var dlg = new SaveFileDialog
+        {
+            Filter = "PDF|*.pdf",
+            FileName = Path.ChangeExtension(ViewModel.SuggestedName, ".pdf"),
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        try
+        {
+            PdfWriter.Write(doc, dlg.FileName);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ViewModel.Status = "Could not export: " + ex.Message;
+            return;
+        }
+        ViewModel.Status = "Exported " + dlg.FileName;
+    }
+
     void OnCopySvg(object sender, RoutedEventArgs e)
     {
         if (!ViewModel.HasResult) return;
