@@ -101,19 +101,96 @@ public class CenterlineTests
     }
 
     [Fact]
-    public void Junction_CrossSplitsIntoFourStrokes()
+    public void Junction_Cross_CollinearArmsWeld_StillMeet()
     {
-        // two crossing 3-px lines: the junction splits the skeleton into four chains
+        // two crossing 3-px lines: the junction splits the skeleton into four chains, but
+        // the opposite arms are collinear pieces of ONE straight stroke — stage 3 welds
+        // each pair into a single 2-anchor line, and the two lines still cross exactly
         var img = Make(64, 64, (x, y) =>
             (y is >= 30 and <= 32 && x is >= 8 and <= 55) ||
             (x is >= 30 and <= 32 && y is >= 8 and <= 55));
         var doc = TraceLineArt(img);
-        Assert.Equal(4, doc.Strokes.Count);
+        Assert.Equal(2, doc.Strokes.Count);
+        StrokePath? h = null, v = null;
         foreach (var stroke in doc.Strokes)
         {
             Assert.False(stroke.Closed);
             Assert.True(Math.Abs(stroke.Width - 3.0) <= 0.5, $"width {stroke.Width:0.00} vs 3.0");
+            var seg = Assert.Single(stroke.Segments);
+            Assert.True(seg.IsLine(0.05), "a welded arm pair must be one line, not a curve");
+            if (Math.Abs(seg.P3.Y - seg.P0.Y) < 1e-9) h = stroke;
+            if (Math.Abs(seg.P3.X - seg.P0.X) < 1e-9) v = stroke;
         }
+        Assert.NotNull(h);
+        Assert.NotNull(v);
+        // each welded line spans its full drawn extent, tip to tip
+        Assert.True(Math.Min(h.Segments[0].P0.X, h.Segments[0].P3.X) <= 9.5 &&
+                    Math.Max(h.Segments[0].P0.X, h.Segments[0].P3.X) >= 54.5,
+            $"horizontal span {Math.Min(h.Segments[0].P0.X, h.Segments[0].P3.X):0.0}..{Math.Max(h.Segments[0].P0.X, h.Segments[0].P3.X):0.0}");
+        Assert.True(Math.Min(v.Segments[0].P0.Y, v.Segments[0].P3.Y) <= 9.5 &&
+                    Math.Max(v.Segments[0].P0.Y, v.Segments[0].P3.Y) >= 54.5,
+            $"vertical span {Math.Min(v.Segments[0].P0.Y, v.Segments[0].P3.Y):0.0}..{Math.Max(v.Segments[0].P0.Y, v.Segments[0].P3.Y):0.0}");
+        // and they still meet: the crossing point lies inside both spans, on both lines
+        double vx = v.Segments[0].P0.X, hy = h.Segments[0].P0.Y;
+        Assert.True(vx >= Math.Min(h.Segments[0].P0.X, h.Segments[0].P3.X) &&
+                    vx <= Math.Max(h.Segments[0].P0.X, h.Segments[0].P3.X),
+            "the vertical line must cross the horizontal one, not stop short");
+        Assert.True(hy >= Math.Min(v.Segments[0].P0.Y, v.Segments[0].P3.Y) &&
+                    hy <= Math.Max(v.Segments[0].P0.Y, v.Segments[0].P3.Y),
+            "the horizontal line must cross the vertical one, not stop short");
+    }
+
+    [Fact]
+    public void TJunction_BarWeldsAcross_StemSnapsExactlyOntoIt()
+    {
+        // a 3-px bar with a 3-px stem meeting it mid-length: the T junction splits the bar
+        // into two collinear pieces — stage 3 welds them back into ONE 2-anchor line, and
+        // the stem's head lands exactly on that line (endpoint snapped to the intersection)
+        var img = Make(64, 64, (x, y) =>
+            (y is >= 30 and <= 32 && x is >= 8 and <= 55) ||
+            (x is >= 30 and <= 32 && y is >= 30 and <= 55));
+        var doc = TraceLineArt(img);
+        Assert.Equal(2, doc.Strokes.Count);
+        StrokePath? bar = null, stem = null;
+        foreach (var stroke in doc.Strokes)
+        {
+            Assert.False(stroke.Closed);
+            var seg = Assert.Single(stroke.Segments);
+            Assert.True(seg.IsLine(0.05), "both the welded bar and the stem must be single lines");
+            if (Math.Abs(seg.P3.Y - seg.P0.Y) < 1e-9) bar = stroke;
+            if (Math.Abs(seg.P3.X - seg.P0.X) < 1e-9) stem = stroke;
+        }
+        Assert.NotNull(bar);
+        Assert.NotNull(stem);
+        // the bar spans both sides of the junction: one stroke, tip to tip
+        Assert.True(Math.Min(bar.Segments[0].P0.X, bar.Segments[0].P3.X) <= 9.5 &&
+                    Math.Max(bar.Segments[0].P0.X, bar.Segments[0].P3.X) >= 54.5,
+            $"bar span {Math.Min(bar.Segments[0].P0.X, bar.Segments[0].P3.X):0.0}..{Math.Max(bar.Segments[0].P0.X, bar.Segments[0].P3.X):0.0}");
+        // the stem's head sits exactly on the bar's line — the intersection, not its own
+        // junction pixel half a pixel off it
+        double barY = bar.Segments[0].P0.Y;
+        double headY = Math.Min(stem.Segments[0].P0.Y, stem.Segments[0].P3.Y);
+        Assert.True(Math.Abs(headY - barY) < 1e-6,
+            $"stem head at y={headY:0.00} must meet the bar's line at y={barY:0.00} exactly");
+    }
+
+    [Fact]
+    public void BrokenLine_SmallGapJump_WeldsIntoOneStroke()
+    {
+        // a 3-px horizontal line broken by a 2-px paper gap: two components, two collinear
+        // strokes — the junction pass jumps the gap and welds them into ONE 2-anchor line
+        var img = Make(96, 64, (x, y) =>
+            y is >= 30 and <= 32 && (x is >= 8 and <= 39 || x is >= 42 and <= 73));
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        Assert.False(stroke.Closed);
+        var seg = Assert.Single(stroke.Segments);
+        Assert.True(seg.IsLine(0.05), "the welded pieces must be one line, not a curve");
+        Assert.True(Math.Abs(seg.P0.Y - 31.5) <= 0.1 && Math.Abs(seg.P3.Y - 31.5) <= 0.1,
+            $"welded line drifted off the stroke: {seg.P0.Y:0.00}..{seg.P3.Y:0.00}");
+        double x0 = Math.Min(seg.P0.X, seg.P3.X), x1 = Math.Max(seg.P0.X, seg.P3.X);
+        Assert.True(x0 <= 9.5 && x1 >= 72.5, $"welded span {x0:0.0}..{x1:0.0} must cover both pieces");
+        Assert.Single(doc.Regions);
     }
 
     [Fact]

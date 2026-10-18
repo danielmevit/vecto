@@ -27,7 +27,9 @@ public sealed class StrokePath
 /// pixels of centerline components are relabelled to paper so the planar partition still tiles
 /// the canvas exactly (the strokes paint on top; see docs/ai/research/2026-10-12-cad-mode-research.md).
 /// VEC-52 (stage 3) regularizes the chains into CAD primitives: corner-split runs become exact
-/// 2-anchor lines with 0/90/45° axis snapping, and circular strokes become exact arcs.
+/// 2-anchor lines with 0/90/45° axis snapping, and circular strokes become exact arcs. A
+/// junction pass then welds the collinear pieces a crossing or a scan gap split off one
+/// straight stroke, and snaps line endpoints to the exact line-line intersections.
 /// </summary>
 public static class Centerline
 {
@@ -180,6 +182,11 @@ public static class Centerline
             if (c.Centerline && c.Emitted)
                 foreach (int i in c.Pixels)
                     labels[i] = paper;
+        // stage 3 junction pass: weld collinear pieces split by junctions or scan gaps,
+        // then land every line endpoint that ends against another line on the exact
+        // intersection — the strokes a CAD user sees cross and meet cleanly
+        MergeCollinearAcrossJunctions(strokes);
+        SnapEndsToIntersections(strokes);
         return strokes;
     }
 
@@ -386,6 +393,169 @@ public static class Centerline
     public const int StraightRunMinPoints = 4;
 
     static double LineTol(double width) => Math.Clamp(FitWidthFactor * width, FitTolMin, FitTolMax);
+
+    /// <summary>Largest gap (px) between the facing endpoints of two collinear pieces the
+    /// junction weld still bridges: a crossing's opposite arms share the junction pixel
+    /// (gap ≈ 0), and a scan's broken line leaves a few paper pixels between the pieces —
+    /// the same reach the ridge bridge grants inside one component (<see cref="BridgeDist"/>).</summary>
+    public const double JunctionMergeGap = 4.5;
+    /// <summary>Largest direction mismatch (deg) between the end pieces of a weldable pair:
+    /// two pieces of one straight stroke fit slightly different TLS directions across a
+    /// scan gap, but a stroke that merely ENDS beside another one points somewhere else.</summary>
+    public const double JunctionMergeAngleDeg = 15.0;
+
+    /// <summary>
+    /// Junction pass, first half: weld collinear pieces of one straight stroke back
+    /// together across the junctions and scan gaps that split them. A crossing cuts every
+    /// stroke it crosses into chains; when two facing pieces are collinear — each facing
+    /// endpoint sits on the other piece's line within the width tolerance, and the pieces
+    /// point the same way — they are ONE stroke, and the concatenated segments collapse
+    /// through <see cref="BezierFitter.MergeCollinearLines"/> into a single 2-anchor line
+    /// spanning both (the seam vertex rides the merged chord, gap included). Deterministic:
+    /// pairs scan in stroke order and the scan restarts after each weld.
+    /// </summary>
+    static void MergeCollinearAcrossJunctions(List<StrokePath> strokes)
+    {
+        double gapSq = JunctionMergeGap * JunctionMergeGap;
+        double minDot = DetMath.Cos(JunctionMergeAngleDeg * Math.PI / 180.0);
+        bool welded = true;
+        while (welded)
+        {
+            welded = false;
+            for (int i = 0; i < strokes.Count && !welded; i++)
+            {
+                var a = strokes[i];
+                if (a.Closed) continue;
+                for (int j = i + 1; j < strokes.Count && !welded; j++)
+                {
+                    var b = strokes[j];
+                    if (b.Closed) continue;
+                    if (Math.Abs(a.Width - b.Width) > Math.Max(1.0, 0.3 * Math.Min(a.Width, b.Width))) continue;
+                    var merged = Weld(a, b);
+                    if (merged == null) continue;
+                    strokes[i] = new StrokePath
+                    {
+                        PaletteIndex = a.PaletteIndex,
+                        Width = Math.Max(a.Width, b.Width),
+                        Closed = false,
+                        Segments = merged,
+                    };
+                    strokes.RemoveAt(j);
+                    welded = true;
+                }
+            }
+        }
+
+        List<CubicBezier>? Weld(StrokePath a, StrokePath b)
+        {
+            double tol = LineTol((a.Width + b.Width) / 2);
+            double tolSq = tol * tol;
+            for (int ra = 0; ra < 2; ra++)
+                for (int rb = 0; rb < 2; rb++)
+                {
+                    var x = ra == 1 ? ReversedSegments(a.Segments) : a.Segments;
+                    var y = rb == 1 ? ReversedSegments(b.Segments) : b.Segments;
+                    var xe = x[^1];
+                    var ye = y[0];
+                    if (!xe.IsLine(0.05) || !ye.IsLine(0.05)) continue;
+                    if (xe.P3.DistSq(ye.P0) > gapSq) continue;
+                    var dx = (xe.P3 - xe.P0).Normalized();
+                    var dy = (ye.P3 - ye.P0).Normalized();
+                    if (dx.Dot(dy) < minDot) continue;
+                    if (PerpDistSqToLine(ye.P0, xe.P0, xe.P3) > tolSq) continue;
+                    if (PerpDistSqToLine(xe.P3, ye.P0, ye.P3) > tolSq) continue;
+                    var concat = new List<CubicBezier>(x.Count + y.Count);
+                    concat.AddRange(x);
+                    concat.AddRange(y);
+                    int before = concat.Count;
+                    BezierFitter.MergeCollinearLines(concat, false, tolSq);
+                    if (concat.Count >= before) continue;
+                    return concat;
+                }
+            return null;
+        }
+    }
+
+    static List<CubicBezier> ReversedSegments(List<CubicBezier> segs)
+    {
+        var r = new List<CubicBezier>(segs.Count);
+        for (int i = segs.Count - 1; i >= 0; i--) r.Add(segs[i].Reversed());
+        return r;
+    }
+
+    /// <summary>Squared perpendicular distance from <paramref name="p"/> to the infinite
+    /// line through <paramref name="a"/> and <paramref name="b"/>.</summary>
+    static double PerpDistSqToLine(Vec2 p, Vec2 a, Vec2 b)
+    {
+        var ab = b - a;
+        double len2 = ab.LengthSq;
+        if (len2 < 1e-12) return p.DistSq(a);
+        double t = (p - a).Dot(ab) / len2;
+        return p.DistSq(a + ab * t);
+    }
+
+    /// <summary>
+    /// Junction pass, second half: a straight stroke that ends against another straight
+    /// stroke moves its endpoint to the exact intersection of the two fitted lines — a T's
+    /// stem lands precisely on the bar it ends against, and the pieces of a crossing that
+    /// did not weld (curved or too-short arms) converge on one shared point instead of each
+    /// stopping on its own junction pixel. Only straight end pieces move (a curve's
+    /// endpoint IS the junction pixel), the intersection must lie on the target stroke, and
+    /// the jump is capped at the width tolerance: anything farther would leave the ink.
+    /// </summary>
+    static void SnapEndsToIntersections(List<StrokePath> strokes)
+    {
+        var lines = new List<(Vec2 A, Vec2 Dir, double Len, int Owner)>();
+        for (int s = 0; s < strokes.Count; s++)
+            foreach (var g in strokes[s].Segments)
+            {
+                if (!g.IsLine(0.05)) continue;
+                var d = g.P3 - g.P0;
+                double len = d.Length;
+                if (len < 2) continue;
+                lines.Add((g.P0, d * (1.0 / len), len, s));
+            }
+        for (int s = 0; s < strokes.Count; s++)
+        {
+            var stroke = strokes[s];
+            if (stroke.Closed) continue;
+            double tol = LineTol(stroke.Width);
+            SnapEnd(head: true);
+            SnapEnd(head: false);
+
+            void SnapEnd(bool head)
+            {
+                var seg = stroke.Segments[head ? 0 : stroke.Segments.Count - 1];
+                if (!seg.IsLine(0.05)) return;
+                var p = head ? seg.P0 : seg.P3;
+                var inner = head ? seg.P3 : seg.P0;
+                var dir = (inner - p).Normalized();
+                if (dir.LengthSq < 0.5) return;
+                bool found = false;
+                var best = p;
+                double bestD2 = tol * tol;
+                foreach (var (a, tdir, len, owner) in lines)
+                {
+                    if (owner == s) continue;
+                    double cross = dir.X * tdir.Y - dir.Y * tdir.X;
+                    if (Math.Abs(cross) < 1e-9) continue;
+                    var dpa = a - p;
+                    double u = (dpa.X * tdir.Y - tdir.X * dpa.Y) / cross;
+                    double v = (dpa.X * dir.Y - dir.X * dpa.Y) / cross;
+                    if (v < -tol || v > len + tol || u < -tol) continue;
+                    var q = p + dir * u;
+                    double d2 = q.DistSq(p);
+                    if (d2 > bestD2) continue;
+                    bestD2 = d2;
+                    best = q;
+                    found = true;
+                }
+                if (found)
+                    stroke.Segments[head ? 0 : stroke.Segments.Count - 1] =
+                        head ? CubicBezier.Line(best, inner) : CubicBezier.Line(inner, best);
+            }
+        }
+    }
 
     /// <summary>
     /// Stage 3 of the CAD mode: the corner-split chain becomes CLEAN primitives. Chain
