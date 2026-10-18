@@ -1,3 +1,4 @@
+using Vecto.Cli;
 using Vecto.Core;
 using Xunit;
 using Xunit.Abstractions;
@@ -130,15 +131,24 @@ public class CenterlineTests
         var cadDoc = Tracer.Trace(scan, new TraceOptions { Style = ImageStyle.LineArt }).Document;
         ((Action<string>)_output.WriteLine)($"CAD strokes={cadDoc.Strokes.Count} regions={cadDoc.Regions.Count}");
         foreach (var s in Centerline.DebugLog.Take(60)) ((Action<string>)_output.WriteLine)(s);
-        Centerline.DebugLog = null;
-        var ring = Make(48, 48, (x, y) =>
+        Centerline.DebugLog.Clear();
+        var ring = Make(64, 64, (x, y) =>
         {
-            double d = Math.Sqrt((x - 23.5) * (x - 23.5) + (y - 23.5) * (y - 23.5));
-            return d is >= 8.5 and <= 11.5;
+            double d = Math.Sqrt((x - 31.5) * (x - 31.5) + (y - 31.5) * (y - 31.5));
+            return d is >= 12.5 and <= 15.5;
         });
+        var ringInk = ScanPreprocess.InkMask(ring);
+        var ringSkel = Centerline.Ridge(ringInk, Centerline.EdtSq(ringInk, 64, 64), 64, 64);
+        for (int y = 0; y < 64; y++)
+        {
+            var row = new char[48];
+            for (int x = 0; x < 48; x++)
+                row[x] = ringSkel[y * 64 + x] ? '#' : ringInk[y * 64 + x] ? '.' : ' ';
+            ((Action<string>)_output.WriteLine)(new string(row));
+        }
         var doc = TraceLineArt(ring);
         ((Action<string>)_output.WriteLine)($"RING strokes={doc.Strokes.Count} regions={doc.Regions.Count}");
-        foreach (var s in Centerline.DebugLog) ((Action<string>)_output.WriteLine)(s);
+        foreach (var s in Centerline.DebugLog!) ((Action<string>)_output.WriteLine)(s);
         Centerline.DebugLog.Clear();
         var diag = Make(64, 64, (x, y) => x >= 8 && x <= 56 && y == x - 8);
         // reconstruct the exact mask the pipeline hands to Thin

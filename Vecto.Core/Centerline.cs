@@ -43,6 +43,9 @@ public static class Centerline
     public const double TextMaxFactor = 20.0;
     /// <summary>…and sit in a row of at least this many same-size peers (Fletcher–Kasturi text rows).</summary>
     public const int TextPeerMin = 4;
+    /// <summary>Maximum gap the ridge bridge reconnects: at staircase transitions the DT
+    /// local-max ridge drops 1–2 pixels, so rings shatter into arcs at their octants.</summary>
+    public const double BridgeDist = 3.5;
 
     /// <summary>Master switch for the centerline stage: off → every LineArt component keeps
     /// today's filled treatment (the VEC-50 escape hatch).</summary>
@@ -140,10 +143,19 @@ public static class Centerline
             ct.ThrowIfCancellationRequested();
             var tracer = new ChainTracer(skel, comp, c.Id, w, h);
             tracer.PruneSpurs(c.Pixels, pruneLen);
+            // bridging closes the staircase gaps before widths are read: a bridged pixel
+            // becomes a degree-2 chain middle, so its width must be measured like any other
+            foreach (int q in tracer.BridgeGaps(c.Pixels, BridgeDist))
+            {
+                double width = 2 * Math.Sqrt(dtSq[q]) - 1;
+                if (Twin(skel, inkMask, dtSq, q % w, q / w, q, w, h)) width += 1;
+                widthAt[q] = width;
+            }
             foreach (var (pixels, closed) in tracer.Trace(c.Pixels))
             {
                 DebugLog?.Add($"  comp {c.Id} chain len={pixels.Count} closed={closed} start=({pixels[0] % w},{pixels[0] / w})");
                 if (pixels.Count < 2) continue;
+                if (!closed) tracer.Extend(pixels);
                 var widths = new List<double>();
                 foreach (int q in pixels)
                     if (tracer.Degree(q) == 2) widths.Add(widthAt[q]);
@@ -475,7 +487,11 @@ public static class Centerline
         }
 
         /// <summary>Removes dead-end branches shorter than <paramref name="pruneLen"/> that end at a
-        /// junction; a branch that ends at another endpoint is a real (short) stroke and stays.</summary>
+        /// junction; a branch that ends at another endpoint is a real (short) stroke and stays.
+        /// Each round collects every spur against the round-start skeleton and deletes them
+        /// together: pruning one-by-one lets the twin fork branch of a stroke end survive
+        /// (its junction degrades to degree 2 once the first twin is gone) and weld itself
+        /// onto the main chain, drifting the fitted curve off the stroke centre.</summary>
         public void PruneSpurs(List<int> pixels, int pruneLen)
         {
             _pruneLen = pruneLen;
@@ -483,6 +499,7 @@ public static class Centerline
             while (removed)
             {
                 removed = false;
+                var spurs = new List<List<int>>();
                 foreach (int e in pixels)
                 {
                     if (!skel[e] || Degree(e) != 1) continue;
@@ -498,8 +515,109 @@ public static class Centerline
                         cur = next;
                     }
                     if (Degree(path[^1]) < 3 || path.Count > pruneLen) continue;
+                    spurs.Add(path);
+                }
+                foreach (var path in spurs)
                     for (int k = 0; k < path.Count - 1; k++) skel[path[k]] = false;
-                    removed = true;
+                removed = spurs.Count > 0;
+            }
+        }
+
+        /// <summary>
+        /// Reconnects ridge gaps: at a staircase transition the DT local-max test drops the
+        /// pixels that link two centre-line runs (a neighbour one step along the true centre
+        /// holds strictly greater DT), which shatters rings at their octants and cuts wobbly
+        /// scan lines into crumbs. Two dead ends within <paramref name="maxDist"/> whose
+        /// connecting pixels are all ink of this component get the missing pixels added.
+        /// Returns the added pixels so their widths can be measured.
+        /// </summary>
+        public List<int> BridgeGaps(List<int> pixels, double maxDist)
+        {
+            var ends = new List<int>();
+            foreach (int e in pixels)
+                if (skel[e] && Degree(e) == 1) ends.Add(e);
+            var pairs = new List<(double D2, int A, int B, List<int> Line)>();
+            for (int i = 0; i < ends.Count; i++)
+                for (int j = i + 1; j < ends.Count; j++)
+                {
+                    int a = ends[i], b = ends[j];
+                    int dx = b % w - a % w, dy = b / w - a / w;
+                    double d2 = (double)dx * dx + dy * dy;
+                    if (d2 > maxDist * maxDist || d2 < 4) continue;   // 8-connected ends need no bridge
+                    var line = Connect(a, b);
+                    if (line.Count > 0) pairs.Add((d2, a, b, line));
+                }
+            pairs.Sort((x, y) => x.D2 != y.D2 ? x.D2.CompareTo(y.D2) : x.A != y.A ? x.A.CompareTo(y.A) : x.B.CompareTo(y.B));
+            var used = new HashSet<int>();
+            var added = new List<int>();
+            foreach (var (_, a, b, line) in pairs)
+            {
+                if (used.Contains(a) || used.Contains(b)) continue;
+                foreach (int q in line)
+                {
+                    skel[q] = true;
+                    added.Add(q);
+                }
+                used.Add(a);
+                used.Add(b);
+            }
+            return added;
+
+            List<int> Connect(int a, int b)
+            {
+                int ax = a % w, ay = a / w, bx = b % w, by = b / w;
+                var line = new List<int>();
+                int dx = Math.Abs(bx - ax), dy = Math.Abs(by - ay);
+                int sx = bx >= ax ? 1 : -1, sy = by >= ay ? 1 : -1;
+                int x = ax, y = ay, err = dx - dy;
+                while (x != bx || y != by)
+                {
+                    int e2 = 2 * err;
+                    if (e2 > -dy) { err -= dy; x += sx; }
+                    if (e2 < dx) { err += dx; y += sy; }
+                    if (x == bx && y == by) break;
+                    int q = y * w + x;
+                    if (comp[q] != id) return [];
+                    line.Add(q);
+                }
+                return line;
+            }
+        }
+
+        /// <summary>
+        /// Grows an open chain into the ink the ridge missed at its ends: towards a stroke
+        /// tip the DT shrinks while a neighbour along the line still holds the high ground,
+        /// so the local-max test drops the last pixel or two and the fitted curve would stop
+        /// short of the ink. Only true dead ends (skeleton degree 1) grow — junction ends
+        /// keep their crossing, and growth stops at the first paper or skeleton pixel.
+        /// </summary>
+        public void Extend(List<int> chain)
+        {
+            if (chain.Count < 2) return;
+            Grow(atEnd: false);
+            Grow(atEnd: true);
+
+            void Grow(bool atEnd)
+            {
+                int p = atEnd ? chain[^1] : chain[0];
+                int q = atEnd ? chain[^2] : chain[1];
+                if (Degree(p) != 1) return;
+                int sx = Math.Sign(p % w - q % w), sy = Math.Sign(p / w - q / w);
+                int x = p % w, y = p / w;
+                var grown = new List<int>();
+                while (grown.Count < 4)
+                {
+                    x += sx; y += sy;
+                    if ((uint)x >= (uint)w || (uint)y >= (uint)h) break;
+                    int c = y * w + x;
+                    if (comp[c] != id || skel[c]) break;
+                    grown.Add(c);
+                }
+                if (atEnd) chain.AddRange(grown);
+                else
+                {
+                    grown.Reverse();
+                    chain.InsertRange(0, grown);
                 }
             }
         }
