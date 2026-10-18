@@ -29,6 +29,9 @@ public sealed class StrokePath
 /// </summary>
 public static class Centerline
 {
+    /// <summary>TEMPORARY debug hook — remove before commit.</summary>
+    public static List<string>? DebugLog;
+
     /// <summary>A component is thin when its widest stroke is at most this × the image's median width.</summary>
     public const double ThinFactor = 2.0;
     /// <summary>Parity slack on the thin test: even-width strokes have no centre pixel, so their
@@ -122,6 +125,10 @@ public static class Centerline
         }
         MarkTextRows(comps, median);
 
+        DebugLog?.Add($"median={median:0.00} pruneLen={Math.Max(2, (int)Math.Ceiling(2 * median))}");
+        foreach (var c in comps)
+            DebugLog?.Add($"comp id={c.Id} px={c.Pixels.Count} bbox=({c.MinX},{c.MinY})-({c.MaxX},{c.MaxY}) width={c.Width:0.00} maxDim={c.MaxDim} cl={c.Centerline}");
+
         int pruneLen = Math.Max(2, (int)Math.Ceiling(2 * median));
         var strokes = new List<StrokePath>();
         foreach (var c in comps)
@@ -132,6 +139,7 @@ public static class Centerline
             tracer.PruneSpurs(c.Pixels, pruneLen);
             foreach (var (pixels, closed) in tracer.Trace(c.Pixels))
             {
+                DebugLog?.Add($"  comp {c.Id} chain len={pixels.Count} closed={closed} start=({pixels[0] % w},{pixels[0] / w})");
                 if (pixels.Count < 2) continue;
                 var widths = new List<double>();
                 foreach (int q in pixels)
