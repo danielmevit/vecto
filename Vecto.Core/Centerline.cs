@@ -43,8 +43,14 @@ public static class Centerline
     /// <summary>…and sit in a row of at least this many same-size peers (Fletcher–Kasturi text rows).</summary>
     public const int TextPeerMin = 4;
     /// <summary>Maximum gap the ridge bridge reconnects: at staircase transitions the DT
-    /// local-max ridge drops 1–2 pixels, so rings shatter into arcs at their octants.</summary>
-    public const double BridgeDist = 3.5;
+    /// local-max ridge drops 1–2 pixels, so rings shatter into arcs at their octants, and a
+    /// wobbly scan line's ridge breaks every few pixels (VEC-52). The bridge's direction
+    /// guard (<see cref="BridgeMaxAngleDeg"/>) is what keeps the larger reach safe.</summary>
+    public const double BridgeDist = 4.5;
+    /// <summary>Largest angle (deg) between a ridge bridge and the dead end's outward chain
+    /// direction: bridges continue strokes, they do not weld caps shut or jump between
+    /// strokes that merely pass close by.</summary>
+    public const double BridgeMaxAngleDeg = 45.0;
 
     /// <summary>Master switch for the centerline stage: off → every LineArt component keeps
     /// today's filled treatment (the VEC-50 escape hatch).</summary>
@@ -131,6 +137,7 @@ public static class Centerline
         MarkTextRows(comps, median);
 
         int pruneLen = Math.Max(2, (int)Math.Ceiling(2 * median));
+        int growLen = Math.Max(4, (int)Math.Ceiling(median));
         var strokes = new List<StrokePath>();
         foreach (var c in comps)
         {
@@ -146,20 +153,19 @@ public static class Centerline
                 if (Twin(skel, inkMask, dtSq, q % w, q / w, q, w, h) >= 0) width += 1;
                 widthAt[q] = width;
             }
+            // trace every chain first and grow the dead ends into the ink the ridge
+            // dropped — the cap-crumb pass needs the grown tips to measure coverage
+            var chains = new List<(List<int> Pixels, bool Closed)>();
             foreach (var (pixels, closed) in tracer.Trace(c.Pixels))
             {
                 if (pixels.Count < 2) continue;
-                if (!closed) tracer.Extend(pixels);
-                var widths = new List<double>();
-                foreach (int q in pixels)
-                    if (tracer.Degree(q) == 2) widths.Add(widthAt[q]);
-                if (widths.Count < 2)
-                {
-                    widths.Clear();
-                    foreach (int q in pixels) widths.Add(widthAt[q]);
-                }
-                if (widths.Count == 0) continue;
-                var stroke = BuildStroke(pixels, closed, Median(widths), ink, p, w, h, skel, inkMask, dtSq);
+                if (!closed) tracer.Extend(pixels, growLen);
+                chains.Add((pixels, closed));
+            }
+            foreach (var (pixels, closed, width) in DropCapCrumbs(chains, tracer, widthAt, median))
+            {
+                if (width <= 0) continue;
+                var stroke = BuildStroke(pixels, closed, width, ink, p, w, h, skel, inkMask, dtSq);
                 if (stroke != null)
                 {
                     strokes.Add(stroke);
@@ -804,39 +810,70 @@ public static class Centerline
         /// holds strictly greater DT), which shatters rings at their octants and cuts wobbly
         /// scan lines into crumbs. Two dead ends within <paramref name="maxDist"/> whose
         /// connecting pixels are all ink of this component get the missing pixels added.
+        /// VEC-52: a wobbly stroke's ridge breaks every few pixels (the DT profile along the
+        /// true centre is non-monotonic at each wobble step, so the local-max test leaves
+        /// isolated pixels and short runs behind), so the bridge now also treats isolated
+        /// ridge pixels (degree 0) as dead ends, iterates until no pair bridges (each pass
+        /// re-reads the ends — a bridged degree-0 pixel becomes a pass-through end that
+        /// bridges onward), and only bridges along the chains: the bridge bearing must stay
+        /// within <see cref="BridgeMaxAngleDeg"/> of the dead end's outward tangent, so a
+        /// stroke's flat tip (whose cap chain ends point back INTO the stroke) never welds
+        /// shut, and parallel strokes that merely pass close stay apart.
         /// Returns the added pixels so their widths can be measured.
         /// </summary>
         public List<int> BridgeGaps(List<int> pixels, double maxDist)
         {
-            var ends = new List<int>();
-            foreach (int e in pixels)
-                if (skel[e] && Degree(e) == 1) ends.Add(e);
-            var pairs = new List<(double D2, int A, int B, List<int> Line)>();
-            for (int i = 0; i < ends.Count; i++)
-                for (int j = i + 1; j < ends.Count; j++)
-                {
-                    int a = ends[i], b = ends[j];
-                    int dx = b % w - a % w, dy = b / w - a / w;
-                    double d2 = (double)dx * dx + dy * dy;
-                    if (d2 > maxDist * maxDist || d2 < 4) continue;   // 8-connected ends need no bridge
-                    var line = Connect(a, b);
-                    if (line.Count > 0) pairs.Add((d2, a, b, line));
-                }
-            pairs.Sort((x, y) => x.D2 != y.D2 ? x.D2.CompareTo(y.D2) : x.A != y.A ? x.A.CompareTo(y.A) : x.B.CompareTo(y.B));
-            var used = new HashSet<int>();
             var added = new List<int>();
-            foreach (var (_, a, b, line) in pairs)
+            bool bridged = true;
+            while (bridged)
             {
-                if (used.Contains(a) || used.Contains(b)) continue;
-                foreach (int q in line)
+                bridged = false;
+                var ends = new List<int>();
+                foreach (int e in pixels)
+                    if (skel[e] && Degree(e) <= 1) ends.Add(e);
+                var pairs = new List<(double D2, int A, int B, List<int> Line)>();
+                for (int i = 0; i < ends.Count; i++)
+                    for (int j = i + 1; j < ends.Count; j++)
+                    {
+                        int a = ends[i], b = ends[j];
+                        int dx = b % w - a % w, dy = b / w - a / w;
+                        double d2 = (double)dx * dx + dy * dy;
+                        if (d2 > maxDist * maxDist || d2 < 4) continue;   // 8-connected ends need no bridge
+                        if (!Aligned(a, b) || !Aligned(b, a)) continue;
+                        var line = Connect(a, b);
+                        if (line.Count > 0) pairs.Add((d2, a, b, line));
+                    }
+                pairs.Sort((x, y) => x.D2 != y.D2 ? x.D2.CompareTo(y.D2) : x.A != y.A ? x.A.CompareTo(y.A) : x.B.CompareTo(y.B));
+                var used = new HashSet<int>();
+                foreach (var (_, a, b, line) in pairs)
                 {
-                    skel[q] = true;
-                    added.Add(q);
+                    if (used.Contains(a) || used.Contains(b)) continue;
+                    foreach (int q in line)
+                    {
+                        skel[q] = true;
+                        added.Add(q);
+                    }
+                    used.Add(a);
+                    used.Add(b);
+                    bridged = true;
                 }
-                used.Add(a);
-                used.Add(b);
             }
             return added;
+
+            /// <summary>True when the bridge from <paramref name="a"/> to <paramref name="b"/>
+            /// continues a's chain: within <see cref="BridgeMaxAngleDeg"/> of the direction
+            /// pointing away from a's only skeleton neighbour. Isolated pixels have no
+            /// direction and accept any bridge.</summary>
+            bool Aligned(int a, int b)
+            {
+                int nb = Neighbor(a, -1);
+                if (nb < 0) return true;
+                double ax = a % w - nb % w, ay = a / w - nb / w;
+                double bx = b % w - a % w, by = b / w - a / w;
+                double la = Math.Sqrt(ax * ax + ay * ay), lb = Math.Sqrt(bx * bx + by * by);
+                if (la < 1e-9 || lb < 1e-9) return true;
+                return (ax * bx + ay * by) / (la * lb) >= DetMath.Cos(BridgeMaxAngleDeg * Math.PI / 180.0);
+            }
 
             List<int> Connect(int a, int b)
             {
@@ -855,7 +892,11 @@ public static class Centerline
                     if (comp[q] != id) return [];
                     line.Add(q);
                 }
-                return line;
+                // an all-skeleton line bridges nothing (two ends of one run) and would only
+                // burn the ends so no real gap could close afterwards
+                foreach (int q in line)
+                    if (!skel[q]) return line;
+                return [];
             }
         }
 
@@ -863,10 +904,12 @@ public static class Centerline
         /// Grows an open chain into the ink the ridge missed at its ends: towards a stroke
         /// tip the DT shrinks while a neighbour along the line still holds the high ground,
         /// so the local-max test drops the last pixel or two and the fitted curve would stop
-        /// short of the ink. Only true dead ends (skeleton degree 1) grow — junction ends
-        /// keep their crossing, and growth stops at the first paper or skeleton pixel.
+        /// short of the ink. On a wobbly stroke the drop is wider (a whole wobble step can
+        /// fall out), so the growth limit scales with the image's median stroke width.
+        /// Only true dead ends (skeleton degree 1) grow — junction ends keep their
+        /// crossing, and growth stops at the first paper or skeleton pixel.
         /// </summary>
-        public void Extend(List<int> chain)
+        public void Extend(List<int> chain, int maxGrow)
         {
             if (chain.Count < 2) return;
             Grow(atEnd: false);
@@ -880,7 +923,7 @@ public static class Centerline
                 int sx = Math.Sign(p % w - q % w), sy = Math.Sign(p / w - q / w);
                 int x = p % w, y = p / w;
                 var grown = new List<int>();
-                while (grown.Count < 4)
+                while (grown.Count < maxGrow)
                 {
                     x += sx; y += sy;
                     if ((uint)x >= (uint)w || (uint)y >= (uint)h) break;
