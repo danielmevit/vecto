@@ -29,9 +29,6 @@ public sealed class StrokePath
 /// </summary>
 public static class Centerline
 {
-    /// <summary>TEMPORARY debug hook — remove before commit.</summary>
-    public static List<string>? DebugLog;
-
     /// <summary>A component is thin when its widest stroke is at most this × the image's median width.</summary>
     public const double ThinFactor = 2.0;
     /// <summary>Parity slack on the thin test: even-width strokes have no centre pixel, so their
@@ -131,10 +128,6 @@ public static class Centerline
         }
         MarkTextRows(comps, median);
 
-        DebugLog?.Add($"median={median:0.00} pruneLen={Math.Max(2, (int)Math.Ceiling(2 * median))}");
-        foreach (var c in comps)
-            DebugLog?.Add($"comp id={c.Id} px={c.Pixels.Count} bbox=({c.MinX},{c.MinY})-({c.MaxX},{c.MaxY}) width={c.Width:0.00} maxDim={c.MaxDim} cl={c.Centerline}");
-
         int pruneLen = Math.Max(2, (int)Math.Ceiling(2 * median));
         var strokes = new List<StrokePath>();
         foreach (var c in comps)
@@ -153,7 +146,6 @@ public static class Centerline
             }
             foreach (var (pixels, closed) in tracer.Trace(c.Pixels))
             {
-                DebugLog?.Add($"  comp {c.Id} chain len={pixels.Count} closed={closed} start=({pixels[0] % w},{pixels[0] / w})");
                 if (pixels.Count < 2) continue;
                 if (!closed) tracer.Extend(pixels);
                 var widths = new List<double>();
@@ -255,7 +247,7 @@ public static class Centerline
                 var poly = CornerPolygon.OptimalPolygon(pts, closed);
                 var corners = CornerPolygon.Corners(pts, closed, poly, p.CornerThresholdDeg);
                 ChainGeometry.SmoothInPlace(pts, closed, corners, 2, 0.5, 0.35);
-                segs = BezierFitter.FitChain(pts, closed, corners, p.FitToleranceSq);
+                segs = BezierFitter.FitChain(pts, closed, corners, StrokeFitTolSq(p));
             }
             catch (InvalidOperationException)
             {
@@ -271,12 +263,21 @@ public static class Centerline
 
         List<CubicBezier> FitSimply()
         {
-            var simple = ChainGeometry.SimplifyDp(pts, p.PolygonEpsilon);
+            var simple = ChainGeometry.SimplifyDp(pts, Math.Max(0.05, p.PolygonEpsilon * StrokeFitFactor));
             var list = new List<CubicBezier>(Math.Max(0, simple.Count - 1));
             for (int i = 0; i + 1 < simple.Count; i++) list.Add(CubicBezier.Line(simple[i], simple[i + 1]));
             return list;
         }
     }
+
+    /// <summary>Centerline chains fit far tighter than boundary chains: a boundary wiggle
+    /// costs nothing (the fill still covers the same pixels), but a stroke is PAINTED with
+    /// its width — a fit allowed to wander like a boundary makes a 2-px stroke paint 3 px
+    /// wide where it drifts (chain ends wobble ±0.5 px at junctions; the fit must not smear
+    /// that across a long straight run).</summary>
+    const double StrokeFitFactor = 0.16;
+
+    static double StrokeFitTolSq(EffectiveParams p) => Math.Max(0.01, p.FitToleranceSq * StrokeFitFactor);
 
     /// <summary>
     /// The twin row pixel of an even-width stroke at (x,y): a 4-neighbour that is ink, not
@@ -300,6 +301,16 @@ public static class Centerline
             twin = q;
             if ((uint)xx >= (uint)w || (uint)yy >= (uint)h) return false;
             if (!ink[q] || skel[q] || dtSq[q] != dtSq[i]) return false;
+            // the pixel must sit at the NEAR edge of its DT plateau across the band: when the
+            // opposite 4-neighbour holds equal DT as well, the pixel is inside a wider plateau
+            // (the centre row of a 3-px stroke tip, a corner bridge pixel) and the true centre
+            // is the pixel itself — shifting it wobbles the stroke off the ink
+            int ox = 2 * x - xx, oy = 2 * y - yy;
+            if ((uint)ox < (uint)w && (uint)oy < (uint)h)
+            {
+                int o = oy * w + ox;
+                if (ink[o] && dtSq[o] == dtSq[i]) return false;
+            }
             if (RowTwin(xx - 1, yy, q - 1, q) || RowTwin(xx + 1, yy, q + 1, q) || RowTwin(xx, yy - 1, q - w, q) || RowTwin(xx, yy + 1, q + w, q))
                 return true;
             // the zigzag twin: the row's own pixels are skeleton here, so demand the band

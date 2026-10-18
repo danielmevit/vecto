@@ -127,7 +127,7 @@ public class CenterlineTests
             Centerline.Enabled = true;
             return;
         }
-        foreach (var s in Centerline.DebugLog?.TakeLast(60) ?? []) ((Action<string>)_output.WriteLine)(s);
+        foreach (var s in Centerline.DebugLog?.TakeLast(400) ?? []) ((Action<string>)_output.WriteLine)(s);
         Centerline.DebugLog = null;
         Centerline.Enabled = true;
         ((Action<string>)_output.WriteLine)($"strokes={doc.Strokes.Count} regions={doc.Regions.Count}");
@@ -263,6 +263,26 @@ public class CenterlineTests
             }
             ((Action<string>)_output.WriteLine)($"region {r,2}: area={reg.Area,6} color=#{c.R:x2}{c.G:x2}{c.B:x2} bbox=({minx},{miny})-({maxx},{maxy})");
         }
+    }
+
+    [Fact]
+    public void EvenWidthLine_CentersBetweenTwinRows()
+    {
+        // 2-px vertical band, cols 30-31, y 8..55: the twin-row shift must put the
+        // centreline at x = 31.0, between the rows — a centreline that wobbles onto a
+        // row paints a 2-px stroke 3 px wide (what the CAD benchmark gate catches)
+        var img = Make(64, 64, (x, y) => x is 30 or 31 && y is >= 8 and <= 55);
+        var doc = TraceLineArt(img);
+        var stroke = Assert.Single(doc.Strokes);
+        Assert.False(stroke.Closed);
+        Assert.True(Math.Abs(stroke.Width - 2.0) <= 0.5, $"width {stroke.Width:0.00} vs 2.0");
+        foreach (var seg in stroke.Segments)
+        {
+            Assert.True(seg.IsLine(0.05), "a straight stroke must not come out curved");
+            Assert.True(Math.Abs(seg.P0.X - 31.0) <= 0.1 && Math.Abs(seg.P3.X - 31.0) <= 0.1,
+                $"segment drifted off the band centre: {seg.P0.X:0.00}..{seg.P3.X:0.00}");
+        }
+        Assert.Single(doc.Regions);
     }
 
     [Fact]
