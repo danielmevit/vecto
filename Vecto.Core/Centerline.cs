@@ -427,38 +427,110 @@ public static class Centerline
     /// point the same way — they are ONE stroke, and the concatenated segments collapse
     /// through <see cref="BezierFitter.MergeCollinearLines"/> into a single 2-anchor line
     /// spanning both (the seam vertex rides the merged chord, gap included). Deterministic:
-    /// pairs scan in stroke order and the scan restarts after each weld.
+    /// the same welds happen in the same order as the original restart-after-every-weld
+    /// scan — repeatedly the first weldable pair in stroke order — but without its
+    /// quadratic rescans: a weld only changes the merged stroke, so the next first pair is
+    /// a pair of the merged stroke (tested at once, earlier strokes first) or the next
+    /// unscanned pair, and candidates come from a spatial hash on the stroke endpoints
+    /// (two strokes can weld only when two endpoints face within
+    /// <see cref="JunctionMergeGap"/>).
     /// </summary>
     static void MergeCollinearAcrossJunctions(List<StrokePath> strokes)
     {
         double gapSq = JunctionMergeGap * JunctionMergeGap;
         double minDot = DetMath.Cos(JunctionMergeAngleDeg * Math.PI / 180.0);
-        bool welded = true;
-        while (welded)
+        int n = strokes.Count;
+        if (n < 2) return;
+        var dead = new bool[n];      // welded away; the survivors keep their scan order
+        var scanned = new bool[n];   // every pair of this unchanged stroke has been tested
+        var grid = new Dictionary<long, List<int>>();
+        for (int s = 0; s < n; s++)
         {
-            welded = false;
-            for (int i = 0; i < strokes.Count && !welded; i++)
+            if (strokes[s].Closed) continue;
+            AddEndpoint(grid, strokes[s].Segments[0].P0, s);
+            AddEndpoint(grid, strokes[s].Segments[^1].P3, s);
+        }
+        var cand = new List<int>();
+        var stamp = new int[n];
+        int round = 0;
+        for (int i = 0; i < n; i++)
+        {
+            if (dead[i] || scanned[i] || strokes[i].Closed) continue;
+            int j = Partner(i, forwardOnly: true);
+            if (j < 0)
             {
-                var a = strokes[i];
-                if (a.Closed) continue;
-                for (int j = i + 1; j < strokes.Count && !welded; j++)
-                {
-                    var b = strokes[j];
-                    if (b.Closed) continue;
-                    if (Math.Abs(a.Width - b.Width) > Math.Max(1.0, 0.3 * Math.Min(a.Width, b.Width))) continue;
-                    var merged = Weld(a, b);
-                    if (merged == null) continue;
-                    strokes[i] = new StrokePath
-                    {
-                        PaletteIndex = a.PaletteIndex,
-                        Width = Math.Max(a.Width, b.Width),
-                        Closed = false,
-                        Segments = merged,
-                    };
-                    strokes.RemoveAt(j);
-                    welded = true;
-                }
+                scanned[i] = true;
+                continue;
             }
+            int m = i;
+            while (j >= 0)
+            {
+                WeldAt(Math.Min(m, j), Math.Max(m, j));
+                m = Math.Min(m, j);
+                j = Partner(m, forwardOnly: false);
+            }
+            scanned[m] = true;
+            i = m - 1;
+        }
+        int w = 0;
+        for (int r = 0; r < n; r++)
+            if (!dead[r]) strokes[w++] = strokes[r];
+        strokes.RemoveRange(w, strokes.Count - w);
+
+        // the first weldable pair of stroke s, in scan order (forwardOnly: only pairs
+        // (s, t) t > s; otherwise the earlier strokes' pairs (t, s) come first) — or -1
+        int Partner(int s, bool forwardOnly)
+        {
+            round++;
+            cand.Clear();
+            CollectAround(strokes[s].Segments[0].P0);
+            CollectAround(strokes[s].Segments[^1].P3);
+            cand.Sort();
+            foreach (int t in cand)
+            {
+                if (forwardOnly && t < s) continue;
+                var a = strokes[Math.Min(s, t)];
+                var b = strokes[Math.Max(s, t)];
+                if (Math.Abs(a.Width - b.Width) > Math.Max(1.0, 0.3 * Math.Min(a.Width, b.Width))) continue;
+                if (Weld(a, b) == null) continue;
+                return t;
+            }
+            return -1;
+
+            void CollectAround(Vec2 p)
+            {
+                int cx = (int)Math.Floor(p.X / JunctionMergeGap), cy = (int)Math.Floor(p.Y / JunctionMergeGap);
+                for (int gy = cy - 1; gy <= cy + 1; gy++)
+                    for (int gx = cx - 1; gx <= cx + 1; gx++)
+                        if (grid.TryGetValue(CellKey(gx, gy), out var list))
+                            foreach (int t in list)
+                            {
+                                if (t == s || dead[t] || stamp[t] == round) continue;
+                                stamp[t] = round;
+                                cand.Add(t);
+                            }
+            }
+        }
+
+        void WeldAt(int lo, int hi)
+        {
+            var a = strokes[lo];
+            var b = strokes[hi];
+            var merged = Weld(a, b)!;
+            RemoveEndpoint(grid, a.Segments[0].P0, lo);
+            RemoveEndpoint(grid, a.Segments[^1].P3, lo);
+            RemoveEndpoint(grid, b.Segments[0].P0, hi);
+            RemoveEndpoint(grid, b.Segments[^1].P3, hi);
+            strokes[lo] = new StrokePath
+            {
+                PaletteIndex = a.PaletteIndex,
+                Width = Math.Max(a.Width, b.Width),
+                Closed = false,
+                Segments = merged,
+            };
+            dead[hi] = true;
+            AddEndpoint(grid, merged[0].P0, lo);
+            AddEndpoint(grid, merged[^1].P3, lo);
         }
 
         List<CubicBezier>? Weld(StrokePath a, StrokePath b)
@@ -468,10 +540,10 @@ public static class Centerline
             for (int ra = 0; ra < 2; ra++)
                 for (int rb = 0; rb < 2; rb++)
                 {
-                    var x = ra == 1 ? ReversedSegments(a.Segments) : a.Segments;
-                    var y = rb == 1 ? ReversedSegments(b.Segments) : b.Segments;
-                    var xe = x[^1];
-                    var ye = y[0];
+                    // the facing end piece of each stroke, reversed in place — the same
+                    // values the reversed-list form tested, without building the lists
+                    var xe = ra == 0 ? a.Segments[^1] : a.Segments[0].Reversed();
+                    var ye = rb == 0 ? b.Segments[0] : b.Segments[^1].Reversed();
                     if (!xe.IsLine(0.05) || !ye.IsLine(0.05)) continue;
                     if (xe.P3.DistSq(ye.P0) > gapSq) continue;
                     var dx = (xe.P3 - xe.P0).Normalized();
@@ -479,9 +551,9 @@ public static class Centerline
                     if (dx.Dot(dy) < minDot) continue;
                     if (PerpDistSqToLine(ye.P0, xe.P0, xe.P3) > tolSq) continue;
                     if (PerpDistSqToLine(xe.P3, ye.P0, ye.P3) > tolSq) continue;
-                    var concat = new List<CubicBezier>(x.Count + y.Count);
-                    concat.AddRange(x);
-                    concat.AddRange(y);
+                    var concat = new List<CubicBezier>(a.Segments.Count + b.Segments.Count);
+                    if (ra == 0) concat.AddRange(a.Segments); else concat.AddRange(ReversedSegments(a.Segments));
+                    if (rb == 0) concat.AddRange(b.Segments); else concat.AddRange(ReversedSegments(b.Segments));
                     int before = concat.Count;
                     BezierFitter.MergeCollinearLines(concat, false, tolSq);
                     if (concat.Count >= before) continue;
@@ -489,6 +561,22 @@ public static class Centerline
                 }
             return null;
         }
+    }
+
+    /// <summary>Cell key of the stage-3 spatial hashes.</summary>
+    static long CellKey(int x, int y) => ((long)x << 32) | (uint)y;
+
+    static void AddEndpoint(Dictionary<long, List<int>> grid, Vec2 p, int s)
+    {
+        long key = CellKey((int)Math.Floor(p.X / JunctionMergeGap), (int)Math.Floor(p.Y / JunctionMergeGap));
+        if (!grid.TryGetValue(key, out var list)) { list = []; grid[key] = list; }
+        list.Add(s);
+    }
+
+    static void RemoveEndpoint(Dictionary<long, List<int>> grid, Vec2 p, int s)
+    {
+        long key = CellKey((int)Math.Floor(p.X / JunctionMergeGap), (int)Math.Floor(p.Y / JunctionMergeGap));
+        if (grid.TryGetValue(key, out var list)) list.Remove(s);
     }
 
     static List<CubicBezier> ReversedSegments(List<CubicBezier> segs)
@@ -517,6 +605,10 @@ public static class Centerline
     /// stopping on its own junction pixel. Only straight end pieces move (a curve's
     /// endpoint IS the junction pixel), the intersection must lie on the target stroke, and
     /// the jump is capped at the width tolerance: anything farther would leave the ink.
+    /// Candidates come from a spatial hash: only a line passing within the tolerance
+    /// (≤ <see cref="FitTolMax"/> px) of the endpoint can win, so each line is indexed in
+    /// the cells its segment crosses and each endpoint queries its neighbourhood — the
+    /// full pairwise scan is quadratic in the strokes, which huge sheets cannot afford.
     /// </summary>
     static void SnapEndsToIntersections(List<StrokePath> strokes)
     {
@@ -530,6 +622,35 @@ public static class Centerline
                 if (len < 2) continue;
                 lines.Add((g.P0, d * (1.0 / len), len, s));
             }
+        const double cell = 8.0;
+        var grid = new Dictionary<long, List<int>>();
+        for (int li = 0; li < lines.Count; li++)
+        {
+            var (a, dir, len, _) = lines[li];
+            int cx = (int)Math.Floor(a.X / cell), cy = (int)Math.Floor(a.Y / cell);
+            int ex = (int)Math.Floor((a.X + dir.X * len) / cell), ey = (int)Math.Floor((a.Y + dir.Y * len) / cell);
+            int sx = Math.Sign(ex - cx), sy = Math.Sign(ey - cy);
+            double tMaxX = sx > 0 ? ((cx + 1) * cell - a.X) / dir.X : sx < 0 ? (cx * cell - a.X) / dir.X : double.PositiveInfinity;
+            double tMaxY = sy > 0 ? ((cy + 1) * cell - a.Y) / dir.Y : sy < 0 ? (cy * cell - a.Y) / dir.Y : double.PositiveInfinity;
+            double tDX = sx != 0 ? cell / Math.Abs(dir.X) : double.PositiveInfinity;
+            double tDY = sy != 0 ? cell / Math.Abs(dir.Y) : double.PositiveInfinity;
+            AddCell(cx, cy);
+            while (cx != ex || cy != ey)
+            {
+                if (tMaxX < tMaxY) { cx += sx; tMaxX += tDX; }
+                else { cy += sy; tMaxY += tDY; }
+                AddCell(cx, cy);
+            }
+
+            void AddCell(int x, int y)
+            {
+                if (!grid.TryGetValue(CellKey(x, y), out var list)) { list = []; grid[CellKey(x, y)] = list; }
+                list.Add(li);
+            }
+        }
+        var stamp = new int[lines.Count];
+        var cand = new List<int>();
+        int round = 0;
         for (int s = 0; s < strokes.Count; s++)
         {
             var stroke = strokes[s];
@@ -546,11 +667,25 @@ public static class Centerline
                 var inner = head ? seg.P3 : seg.P0;
                 var dir = (inner - p).Normalized();
                 if (dir.LengthSq < 0.5) return;
+                round++;
+                cand.Clear();
+                int cx = (int)Math.Floor(p.X / cell), cy = (int)Math.Floor(p.Y / cell);
+                for (int gy = cy - 2; gy <= cy + 2; gy++)
+                    for (int gx = cx - 2; gx <= cx + 2; gx++)
+                        if (grid.TryGetValue(CellKey(gx, gy), out var list))
+                            foreach (int li in list)
+                                if (stamp[li] != round)
+                                {
+                                    stamp[li] = round;
+                                    cand.Add(li);
+                                }
+                cand.Sort();
                 bool found = false;
                 var best = p;
                 double bestD2 = tol * tol;
-                foreach (var (a, tdir, len, owner) in lines)
+                foreach (int li in cand)
                 {
+                    var (a, tdir, len, owner) = lines[li];
                     if (owner == s) continue;
                     double cross = dir.X * tdir.Y - dir.Y * tdir.X;
                     if (Math.Abs(cross) < 1e-9) continue;
@@ -607,17 +742,36 @@ public static class Centerline
         }
         var used = new bool[lines.Count];
         var final = new double[lines.Count];
+        // direction buckets: a cluster candidate is within AngleClusterTolDeg of the
+        // seed, so it sits in the seed's 1-degree bucket or a neighbour — the pairwise
+        // cluster scan is quadratic in the lines, which huge sheets cannot afford
+        int span = Math.Max(1, (int)Math.Ceiling(AngleClusterTolDeg));
+        var bucket = new List<int>[180];
+        for (int k = 0; k < lines.Count; k++)
+        {
+            int b = (int)ang[k];
+            (bucket[b] ??= []).Add(k);
+        }
+        var cluster = new List<int>();
         for (int i = 0; i < lines.Count; i++)
         {
             if (used[i]) continue;
             used[i] = true;
-            var cluster = new List<int> { i };
-            for (int j = i + 1; j < lines.Count; j++)
-                if (!used[j] && DirDistDeg(ang[i], ang[j]) <= AngleClusterTolDeg)
-                {
-                    cluster.Add(j);
-                    used[j] = true;
-                }
+            cluster.Clear();
+            cluster.Add(i);
+            int bi = (int)ang[i];
+            for (int db = -span; db <= span; db++)
+            {
+                var bb = bucket[((bi + db) % 180 + 180) % 180];
+                if (bb == null) continue;
+                foreach (int j in bb)
+                    if (j > i && !used[j] && DirDistDeg(ang[i], ang[j]) <= AngleClusterTolDeg)
+                        cluster.Add(j);
+            }
+            // the original scan collected the members in stroke order; restore it so the
+            // circular mean sums the same values in the same order
+            cluster.Sort(1, cluster.Count - 1, null);
+            foreach (var k in cluster) used[k] = true;
             // circular mean of line directions: double the angles, average, halve
             double x = 0, y = 0;
             foreach (var k in cluster)
