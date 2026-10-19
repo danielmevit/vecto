@@ -154,8 +154,11 @@ internal static class Program
                     : baseNoExt + ".svg");
                 var img = page.Image;
                 var res = Tracer.Trace(img, opt);
-                if (Path.GetExtension(outPath).Equals(".pdf", StringComparison.OrdinalIgnoreCase))
+                var ext = Path.GetExtension(outPath);
+                if (ext.Equals(".pdf", StringComparison.OrdinalIgnoreCase))
                     PdfWriter.Write(res.Document, outPath);
+                else if (ext.Equals(".dxf", StringComparison.OrdinalIgnoreCase))
+                    DxfWriter.Write(res.Document, outPath);
                 else
                     File.WriteAllText(outPath, SvgWriter.Write(res.Document));
                 Console.WriteLine(FormattableString.Invariant(
@@ -403,8 +406,9 @@ internal static class Program
                                                 original vector, trace it, diff the result
 
             options:
-              -o, --out <file>      output path; .pdf writes a vector PDF, anything else
-                                    SVG (default: input with .svg), single input only
+              -o, --out <file>      output path; .pdf writes a vector PDF, .dxf an ASCII
+                                    DXF R12 (CAD linework), anything else SVG (default:
+                                    input with .svg), single input only
               --out-dir <dir>       output directory for batches (default: next to each input)
               --colors <n|auto>     fixed palette size, or automatic (default auto)
               --max-colors <n>      cap for automatic palette (default 16)
