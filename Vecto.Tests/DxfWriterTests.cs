@@ -483,6 +483,21 @@ public class DxfWriterTests
         Assert.Equal(2, Vertices(DxfWriter.Write(StrokeDoc(Stroke(1, false, straight))), 0).Count);
     }
 
+    [Fact]
+    public void CollinearTraversal_RetainsReversalAndArcBulges()
+    {
+        var points = new[] { new Vec2(0, 0), new Vec2(80, 0), new Vec2(20, 0), new Vec2(100, 0) };
+        var lines = points.Zip(points.Skip(1), CubicBezier.Line).ToArray();
+        var v = Vertices(DxfWriter.Write(StrokeDoc(Stroke(1, false, lines))), 0);
+        Assert.Equal(points.Length, v.Count);
+        for (int i = 0; i < points.Length; i++) Assert.Equal(points[i].X, v[i].X);
+        var arc = ArcCubic(new(9000, 8000), 2000, 0, Math.PI / 2);
+        var duplicate = CubicBezier.Line(arc.P0, arc.P0);
+        v = Vertices(DxfWriter.Write(StrokeDoc(Stroke(1, false, duplicate, arc))), 0);
+        Assert.Equal(2, v.Count);
+        Assert.Equal(-Math.Tan(Math.PI / 8), v[0].B, 12);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
@@ -593,10 +608,18 @@ public class DxfWriterTests
     [Fact]
     public void CircularRecovery_RejectsNearEllipseRoundedRectangleAndPerturbedControls()
     {
+        Vec2[] cornerCenters = [new(9900, 7100), new(9900, 8900), new(8100, 8900), new(8100, 7100)];
+        var rounded = new List<CubicBezier>();
+        var corners = cornerCenters.Select((c, i) => ArcCubic(c, 100, (i - 1) * Math.PI / 2, i * Math.PI / 2)).ToArray();
+        for (int i = 0; i < corners.Length; i++)
+        {
+            rounded.Add(corners[i]);
+            rounded.Add(CubicBezier.Line(corners[i].P3, corners[(i + 1) % corners.Length].P0));
+        }
         var loops = new List<List<CubicBezier>>
         {
             EllipseLoop(new(9000, 8000), 2000, 1999),
-            RectLoop(8000, 7000, 10000, 9000, false),
+            rounded,
             CircleLoop(new(9000, 8000), 2000, true),
         };
         var c = loops[2][0];
@@ -617,6 +640,10 @@ public class DxfWriterTests
     [InlineData(38, 19, 19, 19)]
     [InlineData(255, 191, 127, 31)]
     [InlineData(0, 127, 255, 150)]
+    [InlineData(165, 124, 82, 33)]
+    [InlineData(82, 145, 165, 143)]
+    [InlineData(38, 38, 76, 177)]
+    [InlineData(51, 51, 51, 251)]
     [InlineData(102, 102, 102, 252)]
     [InlineData(153, 153, 153, 253)]
     [InlineData(204, 204, 204, 254)]

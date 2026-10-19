@@ -9,7 +9,7 @@ namespace Vecto.Core;
 /// library — netDxf cannot even write R12). Region loops (outer boundaries AND holes)
 /// each become one closed zero-width POLYLINE contour — R12 has no region fill, so a
 /// hole is simply a second closed contour beside its outer loop, and glyph outlines
-/// keep their exact fitted geometry. Stroked centerlines become open/closed POLYLINEs
+/// retain their fitted contours with the approximation rules below. Stroked centerlines become open/closed POLYLINEs
 /// carrying the stroke weight in the global width codes 40/41 (one path = one
 /// selectable stroke). Circular pieces are recovered as VERTEX bulges (group 42 =
 /// tan(sweep/4), signed by the turn direction); an exact full circle whose contour
@@ -270,8 +270,18 @@ public static class DxfWriter
         while (stack.TryPop(out var run))
         {
             int split = -1; double worst = MergeTolSq;
+            var direction = source[run.B].P - source[run.A].P;
+            double previousProjection = 0;
             for (int i = run.A + 1; i < run.B; i++)
             {
+                double projection = (source[i].P - source[run.A].P).Dot(direction);
+                // Retain turning points even when an exactly collinear path doubles back.
+                if (projection < previousProjection)
+                {
+                    split = i - 1 > run.A ? i - 1 : i;
+                    break;
+                }
+                previousProjection = projection;
                 double error = DistSqToChord(source[i].P, source[run.A].P, source[run.B].P);
                 if (error > worst) { worst = error; split = i; }
             }
@@ -345,7 +355,12 @@ public static class DxfWriter
             (253, 153, 153, 153), (254, 204, 204, 204), (255, 255, 255, 255),
         };
         // 24 hues spaced 15 degrees, five brightness levels, each at full and
-        // half saturation. Truncate channels as in the conventional ACI palette.
+        // half saturation. Truncate channels only AFTER HSV conversion; truncating
+        // brightness first gives wrong shades (e.g. 33 is 165,124,82).
+        // Autodesk describes 1..9 / 10..249 / 250..255 palette groups:
+        // https://help.autodesk.com/cloudhelp/2022/ENU/AutoCAD-Core/files/GUID-C163F875-E449-48B7-8CF4-F90DF935118C.htm
+        // Use the regular conventional palette, not display/background adjustments
+        // or anomalous lookup-table entries found in some readers.
         double[] values = [255, 255 * .65, 255 * .5, 255 * .3, 255 * .15];
         for (int hue = 0; hue < 24; hue++)
             for (int shade = 0; shade < 10; shade++)
