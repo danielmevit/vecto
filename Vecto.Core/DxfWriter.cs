@@ -21,38 +21,21 @@ namespace Vecto.Core;
 /// strict R12 readers simply ignore it; nothing claims pixels are mm. Coordinates
 /// flip to the CAD convention, yCAD = Height − y, so the canvas origin is the
 /// lower-left corner and $EXTMIN/$EXTMAX span the canvas. General (non-circular)
-/// cubics go through deterministic adaptive subdivision: each piece becomes a chord or
-/// a recovered circular arc within <see cref="ApproxTolerance"/> of the original curve
-/// (piece fit and collinear-vertex merge each get half the budget), recursion is
-/// depth-capped and the cap's fallback is the chord. Culture-invariant by
-/// construction; the same document always produces byte-identical output.
+/// cubics use control-hull-bounded subdivision and cleanup checked against all
+/// original subdivision vertices, within 0.1 px including serialization. Recognized
+/// circular control constructions recover the intended analytic circle (rather than
+/// the scale-dependent cubic approximation). Culture-invariant and deterministic.
 /// </summary>
 public static class DxfWriter
 {
-    /// <summary>Documented approximation bound (px): every emitted chord or recovered arc
-    /// of a general cubic stays within this distance of the original curve.</summary>
+    /// <summary>Maximum general-cubic approximation error, including cleanup (px).
+    /// Analytic recovery of circular control constructions is a separate operation.</summary>
     public const double ApproxTolerance = 0.1;
-
-    /// <summary>Chord/arc acceptance tolerance: half the approximation budget (the
-    /// collinear-vertex merge spends the other half).</summary>
-    const double PieceTolerance = ApproxTolerance / 2;
-
-    /// <summary>Largest sweep (rad) one recovered arc may span; a wider sweep subdivides
-    /// (the Bezier fitter emits ≤90° pieces, so real input never hits the cap).</summary>
-    const double MaxArcSweep = Math.PI;
-
-    /// <summary>Adaptive subdivision depth cap; at the cap the piece becomes a chord
-    /// (safe fallback — the piece is then ≤ segment length / 2^cap).</summary>
-    const int MaxDepth = 12;
-
-    /// <summary>Pieces and vertex gaps shorter than this (px) are degenerate noise.</summary>
+    const double PieceTolerance = 0.025;
+    const double MergeTolSq = 0.025 * 0.025;
+    const int MaxDepth = 20;
+    const int MaxVertices = 1_000_000;
     const double Eps = 1e-6;
-    static readonly double EpsSq = Eps * Eps;
-
-    /// <summary>A vertex this close (px) to its neighbours' chord is dropped, so a
-    /// straight run stays one two-vertex path.</summary>
-    const double MergeTolerance = ApproxTolerance / 2;
-    static readonly double MergeTolSq = MergeTolerance * MergeTolerance;
 
     public static void Write(VectorDocument doc, string path) =>
         File.WriteAllText(path, Write(doc), Encoding.ASCII);
@@ -111,7 +94,8 @@ public static class DxfWriter
     /// VERTEX bulges and a SEQEND; degenerate contours are skipped.</summary>
     static void WriteContour(StringBuilder sb, List<CubicBezier> segs, bool closed, double width, int height, string layer)
     {
-        if (segs.Count == 0) return;
+        if (segs.Count == 0 || segs.Any(s => !IsFinite(s.P0) || !IsFinite(s.P1) ||
+            !IsFinite(s.P2) || !IsFinite(s.P3))) return;
         width = double.IsFinite(width) && width > 0 ? width : 0;
         if (width == 0 && closed && TryFullCircle(segs, height, out var center, out var radius))
         {
@@ -150,7 +134,7 @@ public static class DxfWriter
         if (!closed)
         {
             var end = Flip(segs[^1].P3, height);
-            if (verts.Count == 0 || end.DistSq(verts[^1].P) > EpsSq)
+            if (verts.Count == 0 || end != verts[^1].P)
                 verts.Add((end, 0));
         }
         Deduplicate(verts, closed);
@@ -165,14 +149,17 @@ public static class DxfWriter
         return verts;
     }
 
-    /// <summary>One cubic piece as a straight vertex (bulge 0), a recovered arc vertex
-    /// (bulge = signed tan(sweep/4)), or two halves — adaptively, deterministically,
-    /// with the chord as the depth-cap fallback.</summary>
+    // A cubic lies in its control hull. Distance to the finite chord is convex,
+    // so bounding both interior controls bounds the entire curve, including cusps.
+    // Only original pieces may recover circular intent; subdivided general curves
+    // must never acquire a new circular interpretation.
     static void AppendSegment(List<(Vec2 P, double B)> verts, CubicBezier seg, int height, int depth)
     {
-        if (depth >= MaxDepth)
+        if (verts.Count >= MaxVertices)
+            throw new InvalidOperationException("DXF geometry exceeds the bounded subdivision budget.");
+        if (depth == 0 && TryConstruction(seg, out _, out _, out double sweep))
         {
-            verts.Add((Flip(seg.P0, height), 0));
+            verts.Add((Flip(seg.P0, height), -Math.Tan(sweep / 4)));
             return;
         }
         if (seg.IsLine(PieceTolerance))
@@ -180,9 +167,17 @@ public static class DxfWriter
             verts.Add((Flip(seg.P0, height), 0));
             return;
         }
-        if (TryArcBulge(seg, height, out double bulge))
+        if (depth >= MaxDepth)
         {
-            verts.Add((Flip(seg.P0, height), bulge));
+            // Linear interpolation error <= max|B''|/(8*n*n). B'' is linear,
+            // hence its maximum norm is bounded by its two endpoint norms.
+            double second = 6 * Math.Max((seg.P2 - seg.P1 * 2 + seg.P0).Length,
+                (seg.P3 - seg.P2 * 2 + seg.P1).Length);
+            double count = Math.Ceiling(Math.Sqrt(second / (8 * PieceTolerance)));
+            if (!double.IsFinite(count) || count > MaxVertices - verts.Count)
+                throw new InvalidOperationException("DXF geometry cannot meet tolerance within the subdivision budget.");
+            int n = Math.Max(1, (int)count);
+            for (int i = 0; i < n; i++) verts.Add((Flip(seg.Eval(i / (double)n), height), 0));
             return;
         }
         var (left, right) = SplitAt(seg, 0.5);
@@ -190,141 +185,103 @@ public static class DxfWriter
         AppendSegment(verts, right, height, depth + 1);
     }
 
-    /// <summary>Circular-arc hypothesis on one cubic: algebraic least-squares circle
-    /// (Kåsa) through 17 samples, accepted when every sample sits within
-    /// <see cref="PieceTolerance"/> of the circle and the samples walk the circle
-    /// monotonically over at most <see cref="MaxArcSweep"/>. The bulge is signed by the
-    /// CAD-space sweep direction (positive = counterclockwise), computed on Y-flipped
-    /// samples so the image→CAD mirror is already accounted for.</summary>
-    static bool TryArcBulge(CubicBezier seg, int height, out double bulge)
+    // Recover only the fitter's endpoint/tangent/control construction:
+    // controls = endpoints +/- unit tangent * r * 4/3*tan(sweep/4).
+    // Work relative to P0 to avoid cancellation on translated drawing sheets.
+    static bool TryConstruction(CubicBezier s, out Vec2 center, out double radius, out double sweep)
     {
-        bulge = 0;
-        var pts = new Vec2[17];
-        for (int i = 0; i < pts.Length; i++)
-            pts[i] = Flip(seg.Eval(i / (double)(pts.Length - 1)), height);
-        if (!TryCircleFit(pts, out var center, out double radius)) return false;
-        for (int i = 0; i < pts.Length; i++)
-            if (Math.Abs((pts[i] - center).Length - radius) > PieceTolerance) return false;
-        if (!MonotoneSweep(pts, center, out double sweep)) return false;
-        if (Math.Abs(sweep) > MaxArcSweep) return false;
-        if (Math.Abs(sweep) < 1e-4) return true;             // effectively straight: chord
-        bulge = Math.Tan(sweep / 4);
-        return true;
+        center = default; radius = 0; sweep = 0;
+        if (!IsFinite(s.P0) || !IsFinite(s.P1) || !IsFinite(s.P2) || !IsFinite(s.P3)) return false;
+        var d = s.P3 - s.P0;
+        var t = s.P1 - s.P0;
+        double length = t.Length;
+        if (!(length > Eps) || !(d.Length > Eps)) return false;
+        t *= 1 / length;
+        var normal = new Vec2(-t.Y, t.X);
+        double denom = 2 * normal.Dot(d);
+        if (Math.Abs(denom) < 1e-12 * d.Length) return false;
+        var relativeCenter = normal * (d.LengthSq / denom);
+        radius = relativeCenter.Length;
+        if (!(radius > Eps) || !double.IsFinite(radius)) return false;
+        var r0 = -relativeCenter;
+        var r1 = d - relativeCenter;
+        sweep = Math.Atan2(r0.X * r1.Y - r0.Y * r1.X, r0.Dot(r1));
+        if (Math.Abs(sweep) < 1e-5 || Math.Abs(sweep) > Math.PI / 2 + 1e-8) return false;
+        double k = 4.0 / 3 * Math.Tan(sweep / 4);
+        var expected1 = new Vec2(-r0.Y, r0.X) * k;
+        var expected2 = d - new Vec2(-r1.Y, r1.X) * k;
+        // Strict numerical construction tolerance, capped in absolute drawing units.
+        double tol = Math.Min(1e-5, 1e-8 * Math.Max(1, radius));
+        if ((s.P1 - s.P0 - expected1).Length > tol ||
+            (s.P2 - s.P0 - expected2).Length > tol) return false;
+        center = s.P0 + relativeCenter;
+        return IsFinite(center);
     }
 
-    /// <summary>Exact-full-circle hypothesis for a closed contour: one Kåsa circle
-    /// through all segments' samples, accepted when every sample sits within
-    /// <see cref="PieceTolerance"/> of it and the samples walk it monotonically through
-    /// one full turn. An arbitrary closed cubic — an ellipse, a blob, a rounded
-    /// polygon — fails the residual or the monotone-turn test; a circle is never
-    /// guessed from a few sample points alone.</summary>
     static bool TryFullCircle(List<CubicBezier> loop, int height, out Vec2 center, out double radius)
     {
         center = default; radius = 0;
-        if (loop.Count == 0) return false;
-        var pts = new Vec2[loop.Count * 9];
-        int k = 0;
-        foreach (var seg in loop)
-            for (int i = 0; i <= 8; i++)                     // includes both endpoints, so
-                pts[k++] = Flip(seg.Eval(i / 8.0), height);  // the turn closes on itself
-        if (!TryCircleFit(pts, out center, out radius)) return false;
-        for (int i = 0; i < pts.Length; i++)
-            if (Math.Abs((pts[i] - center).Length - radius) > PieceTolerance) return false;
-        if (!MonotoneSweep(pts, center, out double sweep)) return false;
-        return Math.Abs(Math.Abs(sweep) - 2 * Math.PI) <= 0.05;
-    }
-
-    /// <summary>Unwrapped angular sweep of consecutive samples around <paramref name="center"/>;
-    /// false when the walk is not monotone (not one arc) or a single step exceeds 90°.</summary>
-    static bool MonotoneSweep(Vec2[] pts, Vec2 center, out double sweep)
-    {
-        sweep = 0;
-        double prev = Math.Atan2(pts[0].Y - center.Y, pts[0].X - center.X);
-        for (int i = 1; i < pts.Length; i++)
+        if (loop.Count < 4 || !TryConstruction(loop[0], out var c, out double r, out double first)) return false;
+        double sum = 0;
+        double tol = Math.Min(1e-5, 1e-8 * Math.Max(1, r));
+        for (int i = 0; i < loop.Count; i++)
         {
-            double ang = Math.Atan2(pts[i].Y - center.Y, pts[i].X - center.X);
-            double d = ang - prev;
-            if (d > Math.PI) d -= 2 * Math.PI;
-            else if (d <= -Math.PI) d += 2 * Math.PI;
-            if (Math.Abs(d) > Math.PI / 2) return false;
-            if (d > 1e-9) { if (sweep < -1e-9) return false; }
-            else if (d < -1e-9) { if (sweep > 1e-9) return false; }
-            sweep += d;
-            prev = ang;
+            if ((loop[i].P3 - loop[(i + 1) % loop.Count].P0).Length > tol ||
+                !TryConstruction(loop[i], out var ci, out double ri, out double turn) ||
+                (ci - c).Length > tol || Math.Abs(ri - r) > tol || turn * first <= 0) return false;
+            sum += turn;
         }
-        return true;
-    }
-
-    /// <summary>Algebraic least-squares circle (Kåsa): x² + y² = A·x + B·y + C solved by
-    /// 3×3 Cramer. False for degenerate inputs; the radius is kept in [0.1, 10⁶] px so a
-    /// zero-radius arc can never reach the output.</summary>
-    static bool TryCircleFit(Vec2[] pts, out Vec2 center, out double radius)
-    {
-        center = default; radius = 0;
-        double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sxz = 0, syz = 0, sz = 0;
-        foreach (var p in pts)
-        {
-            double x = p.X, y = p.Y, z = x * x + y * y;
-            sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y;
-            sxz += x * z; syz += y * z; sz += z;
-        }
-        int n = pts.Length;
-        double m00 = sxx, m01 = sxy, m02 = sx;
-        double m10 = sxy, m11 = syy, m12 = sy;
-        double m20 = sx, m21 = sy, m22 = n;
-        double det = m00 * (m11 * m22 - m12 * m21) - m01 * (m10 * m22 - m12 * m20) + m02 * (m10 * m21 - m11 * m20);
-        if (Math.Abs(det) < 1e-9) return false;
-        double detA = sxz * (m11 * m22 - m12 * m21) - m01 * (syz * m22 - m12 * sz) + m02 * (syz * m21 - m11 * sz);
-        double detB = m00 * (syz * m22 - m12 * sz) - sxz * (m10 * m22 - m12 * m20) + m02 * (m10 * sz - syz * m20);
-        double detC = m00 * (m11 * sz - syz * m21) - m01 * (m10 * sz - syz * m20) + sxz * (m10 * m21 - m11 * m20);
-        double ca = detA / det, cb = detB / det, cc = detC / det;
-        var c = new Vec2(ca / 2, cb / 2);
-        double r2 = cc + c.LengthSq;
-        if (!IsFinite(c) || !(r2 >= 0.01) || !(r2 <= 1e12)) return false;
-        center = c;
-        radius = Math.Sqrt(r2);
+        if (Math.Abs(Math.Abs(sum) - 2 * Math.PI) > 1e-8) return false;
+        center = Flip(c, height); radius = r;
         return true;
     }
 
     // ---- vertex cleanup --------------------------------------------------
 
-    /// <summary>Removes back-to-back duplicate vertices; a zero-chord bulge is degenerate
-    /// noise (our arcs never sweep a full turn), so it dies with its vertex.</summary>
+    // Remove only identical straight vertices; never overwrite a surviving arc bulge.
     static void Deduplicate(List<(Vec2 P, double B)> v, bool closed)
     {
-        for (int i = 0; i + 1 < v.Count; i++)
-            if (v[i].P.DistSq(v[i + 1].P) <= EpsSq)
-            {
-                v[i] = (v[i].P, 0);
-                v.RemoveAt(i + 1);
-                i--;
-            }
-        if (closed)
-            while (v.Count > 1 && v[0].P.DistSq(v[^1].P) <= EpsSq)
-                v.RemoveAt(v.Count - 1);                     // never a duplicate closure vertex
+        for (int i = v.Count - 2; i >= 0; i--)
+            if (v[i].P == v[i + 1].P && v[i].B == 0) v.RemoveAt(i);
+        if (closed && v.Count > 1 && v[0].P == v[^1].P && v[^1].B == 0)
+            v.RemoveAt(v.Count - 1);
     }
 
-    /// <summary>Drops a vertex whose two straight neighbours leave it within
-    /// <see cref="MergeTolerance"/> of their chord — a straight run split at a seam or a
-    /// scan gap stays one two-vertex path. Arc vertices never merge.</summary>
+    // Simplify each straight run against its ORIGINAL vertices, never the last
+    // locally shortened path. The convex distance bound extends to whole chords.
+    // Anchoring closed contours at vertex zero preserves their traversal seam.
     static void MergeCollinear(List<(Vec2 P, double B)> v, bool closed)
     {
-        bool removed = true;
-        while (removed && v.Count > (closed ? 3 : 2))
-        {
-            removed = false;
-            int n = v.Count;
-            for (int i = 0; i < n; i++)
+        if (v.Count < 3) return;
+        var source = v.ToList();
+        if (closed) source.Add((source[0].P, 0));
+        var keep = new bool[source.Count];
+        keep[0] = keep[^1] = true;
+        var stack = new Stack<(int A, int B)>();
+        int start = 0;
+        for (int i = 0; i + 1 < source.Count; i++)
+            if (source[i].B != 0)
             {
-                if (!closed && (i == 0 || i == n - 1)) continue;
-                int a = (i - 1 + n) % n, b = (i + 1) % n;
-                if (Math.Abs(v[a].B) > 1e-12 || Math.Abs(v[i].B) > 1e-12) continue;
-                if (DistSqToChord(v[i].P, v[a].P, v[b].P) > MergeTolSq) continue;
-                v.RemoveAt(i);
-                removed = true;
-                break;
+                stack.Push((start, i));
+                keep[i] = keep[i + 1] = true;
+                start = i + 1;
             }
+        stack.Push((start, source.Count - 1));
+        while (stack.TryPop(out var run))
+        {
+            int split = -1; double worst = MergeTolSq;
+            for (int i = run.A + 1; i < run.B; i++)
+            {
+                double error = DistSqToChord(source[i].P, source[run.A].P, source[run.B].P);
+                if (error > worst) { worst = error; split = i; }
+            }
+            if (split < 0) continue;
+            keep[split] = true;
+            stack.Push((run.A, split)); stack.Push((split, run.B));
         }
+        v.Clear();
+        for (int i = 0; i < source.Count - (closed ? 1 : 0); i++)
+            if (keep[i]) v.Add(source[i]);
     }
 
     static double DistSqToChord(Vec2 p, Vec2 a, Vec2 b)
@@ -357,14 +314,8 @@ public static class DxfWriter
 
     // ---- ACI colour mapping ----------------------------------------------
 
-    /// <summary>
-    /// Nearest standard ACI pen index for a palette colour (R12 layers carry an ACI pen
-    /// number, not RGB). Candidates: the nine standard colours 1-9 (primary, secondary,
-    /// gray), the grayscale ramp 250-255, and the 24 hue families of the 10-249 colour
-    /// wheel at their full-brightness step (ACI 10+10h) and half-brightness step
-    /// (ACI 19+10h). Nearest by squared RGB distance, ties to the lower index — so
-    /// white maps to 7 (not 255) and mid-gray to 8 (not 252).
-    /// </summary>
+    /// <summary>Nearest conventional ACI colour by squared RGB distance over all
+    /// indices 1..255; ties use the lower index. ACI 7 is background-dependent.</summary>
     public static int NearestAci(Rgba32 c)
     {
         int best = 7;
@@ -389,31 +340,30 @@ public static class DxfWriter
             // standard colours 1-9: red, yellow, green, cyan, blue, magenta, white, gray, light gray
             (1, 255, 0, 0), (2, 255, 255, 0), (3, 0, 255, 0), (4, 0, 255, 255), (5, 0, 0, 255),
             (6, 255, 0, 255), (7, 255, 255, 255), (8, 128, 128, 128), (9, 192, 192, 192),
-            // grayscale ramp 250-255
-            (250, 51, 51, 51), (251, 80, 80, 80), (252, 128, 128, 128),
-            (253, 160, 160, 160), (254, 192, 192, 192), (255, 255, 255, 255),
+            // Conventional six-step gray ramp (ACI 7 remains display-dependent).
+            (250, 0, 0, 0), (251, 51, 51, 51), (252, 102, 102, 102),
+            (253, 153, 153, 153), (254, 204, 204, 204), (255, 255, 255, 255),
         };
-        for (int h = 0; h < 24; h++)
-        {
-            var (r, g, b) = WheelHue(h);
-            list.Add((10 + 10 * h, r, g, b));
-            list.Add((19 + 10 * h, (byte)((r + 1) / 2), (byte)((g + 1) / 2), (byte)((b + 1) / 2)));
-        }
+        // 24 hues spaced 15 degrees, five brightness levels, each at full and
+        // half saturation. Truncate channels as in the conventional ACI palette.
+        double[] values = [255, 255 * .65, 255 * .5, 255 * .3, 255 * .15];
+        for (int hue = 0; hue < 24; hue++)
+            for (int shade = 0; shade < 10; shade++)
+            {
+                double value = values[shade / 2];
+                double low = shade % 2 == 0 ? 0 : value / 2;
+                double rise = low + (value - low) * (hue % 4) / 4;
+                double fall = value - (value - low) * (hue % 4) / 4;
+                var rgb = (hue / 4) switch
+                {
+                    0 => (value, rise, low), 1 => (fall, value, low),
+                    2 => (low, value, rise), 3 => (low, fall, value),
+                    4 => (rise, low, value), _ => (value, low, fall),
+                };
+                list.Add((10 + 10 * hue + shade, (byte)rgb.Item1, (byte)rgb.Item2, (byte)rgb.Item3));
+            }
         return list.OrderBy(t => t.Aci).ToArray();
     }
-
-    /// <summary>The ACI wheel's 24 hue families: 12 saturated hues (families 0-11) and
-    /// their pastel counterparts (families 12-23, every channel lifted by 128).</summary>
-    static (byte R, byte G, byte B) WheelHue(int h) => h switch
-    {
-        0 => (255, 0, 0), 1 => (255, 128, 0), 2 => (255, 255, 0), 3 => (128, 255, 0),
-        4 => (0, 255, 0), 5 => (0, 255, 128), 6 => (0, 255, 255), 7 => (0, 128, 255),
-        8 => (0, 0, 255), 9 => (128, 0, 255), 10 => (255, 0, 255), 11 => (255, 0, 128),
-        12 => (255, 128, 128), 13 => (255, 192, 128), 14 => (255, 255, 128), 15 => (192, 255, 128),
-        16 => (128, 255, 128), 17 => (128, 255, 192), 18 => (128, 255, 255), 19 => (128, 192, 255),
-        20 => (128, 128, 255), 21 => (192, 128, 255), 22 => (255, 128, 255), 23 => (255, 128, 192),
-        _ => (0, 0, 0),
-    };
 
     // ---- group code plumbing ---------------------------------------------
 
@@ -432,5 +382,5 @@ public static class DxfWriter
         Pair(sb, code, value.ToString(CultureInfo.InvariantCulture));
 
     static void Pair(StringBuilder sb, int code, double value) =>
-        Pair(sb, code, value.ToString("0.0#####", CultureInfo.InvariantCulture));
+        Pair(sb, code, value.ToString("0.0##############", CultureInfo.InvariantCulture));
 }

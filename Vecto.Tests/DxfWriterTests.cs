@@ -410,16 +410,16 @@ public class DxfWriterTests
         Assert.Equal(7, DxfWriter.NearestAci(new Rgba32(255, 255, 255, 255)));   // white → 7, not 255
         Assert.Equal(8, DxfWriter.NearestAci(new Rgba32(128, 128, 128, 255)));   // gray → 8, not 252
         Assert.Equal(250, DxfWriter.NearestAci(new Rgba32(0, 0, 0, 255)));       // black → nearest gray
-        Assert.Equal(20, DxfWriter.NearestAci(new Rgba32(255, 128, 0, 255)));    // orange → wheel family 1
-        Assert.Equal(150, DxfWriter.NearestAci(new Rgba32(255, 255, 128, 255))); // pale yellow → family 14
-        Assert.Equal(19, DxfWriter.NearestAci(new Rgba32(128, 0, 0, 255)));      // dark red → family 0 half step
+        Assert.Equal(30, DxfWriter.NearestAci(new Rgba32(255, 128, 0, 255)));    // conventional 30° orange
+        Assert.Equal(51, DxfWriter.NearestAci(new Rgba32(255, 255, 128, 255))); // half-saturated yellow
+        Assert.Equal(14, DxfWriter.NearestAci(new Rgba32(128, 0, 0, 255)));      // red at brightness 127
 
         var colors = new[]
         {
             new Rgba32(255, 0, 0, 255), new Rgba32(0, 255, 255, 255), new Rgba32(255, 255, 255, 255),
             new Rgba32(0, 0, 0, 255), new Rgba32(128, 128, 128, 255), new Rgba32(255, 128, 0, 255),
         };
-        var expected = new[] { 1, 4, 7, 250, 8, 20 };
+        var expected = new[] { 1, 4, 7, 250, 8, 30 };
         var doc = new VectorDocument
         {
             Width = 100,
@@ -471,6 +471,157 @@ public class DxfWriterTests
                 $"curve point {i} deviates {best:0.0000} px from the emitted segments");
         }
     }
+
+    [Fact]
+    public void CumulativeCleanup_IsBoundedAgainstEveryOriginalLine()
+    {
+        var points = Enumerable.Range(0, 201).Select(i => new Vec2(i, .001 * i * i)).ToArray();
+        var lines = points.Zip(points.Skip(1), CubicBezier.Line).ToArray();
+        AssertEmittedError(lines, false);
+        var straight = Enumerable.Range(0, 200).Select(i =>
+            CubicBezier.Line(new Vec2(10000 + i, 9000 + 2 * i), new Vec2(10001 + i, 9002 + 2 * i))).ToArray();
+        Assert.Equal(2, Vertices(DxfWriter.Write(StrokeDoc(Stroke(1, false, straight))), 0).Count);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void GeneralGeometry_LargeTranslatedInflectedCuspAndClosed(int kind)
+    {
+        var origin = new Vec2(9000, 8000);
+        var curve = kind switch
+        {
+            0 => new CubicBezier(new(0, 0), new(4500, .19), new(9000, -.19), new(14000, 0)),
+            1 => new CubicBezier(new(0, 0), new(1000, 1800), new(-1000, 1800), new(0, 0)),
+            2 => new CubicBezier(new(0, 0), new(1400, 2100), new(-1400, -2100), new(0, 0)),
+            3 => new CubicBezier(new(0, 0), new(4000, -3000), new(-3000, 4000), new(1000, 1000)),
+            _ => new CubicBezier(new(0, 0), new(2000, 0), new(-1000, 0), new(1000, 0)),
+        };
+        curve = new(curve.P0 + origin, curve.P1 + origin, curve.P2 + origin, curve.P3 + origin);
+        AssertEmittedError([curve], kind == 1 || kind == 2);
+    }
+
+    // Checks the serialized output, including cleanup and rounding, in both directions.
+    // The reference is a densely sampled ORIGINAL curve, independent of writer predicates.
+    static void AssertEmittedError(CubicBezier[] curves, bool closed)
+    {
+        var dxf = DxfWriter.Write(StrokeDoc(Stroke(1, closed, curves)));
+        var vertices = Vertices(dxf, 0);
+        var reference = new List<Vec2>();
+        foreach (var c in curves)
+            for (int i = 0; i <= 8192; i++)
+            {
+                var q = c.Eval(i / 8192.0);
+                reference.Add(new(q.X, 80 - q.Y));
+            }
+        int edges = vertices.Count - (closed ? 0 : 1);
+        var emitted = vertices.Select(v => new Vec2(v.X, v.Y)).ToArray();
+        double forward = 0, reverse = 0;
+        // Multi-line regression needs only 33 samples per original line.
+        int step = curves.Length > 1 ? 256 : 1;
+        for (int i = 0; i < reference.Count; i += step)
+        {
+            double best = double.MaxValue;
+            for (int k = 0; k < edges; k++)
+                best = Math.Min(best, DistToArc(reference[i], emitted[k], emitted[(k + 1) % emitted.Length], vertices[k].B));
+            forward = Math.Max(forward, best);
+        }
+        for (int k = 0; k < edges; k++)
+        {
+            Assert.Equal(0, vertices[k].B); // general curves cannot gain circular intent
+            for (int i = 0; i <= 8; i++)
+            {
+                var q = emitted[k] + (emitted[(k + 1) % emitted.Length] - emitted[k]) * (i / 8.0);
+                double best = double.MaxValue;
+                for (int j = 0; j + 1 < reference.Count; j += step)
+                    best = Math.Min(best, DistToSegment(q, reference[j], reference[Math.Min(j + step, reference.Count - 1)]));
+                reverse = Math.Max(reverse, best);
+            }
+        }
+        Assert.True(forward <= .1, $"Original to DXF: {forward:R}");
+        Assert.True(reverse <= .1, $"DXF to original: {reverse:R}");
+        Assert.Equal(curves[0].P0.X, vertices[0].X, 8);
+        Assert.Equal(80 - curves[0].P0.Y, vertices[0].Y, 8);
+        if (!closed)
+        {
+            Assert.Equal(curves[^1].P3.X, vertices[^1].X, 8);
+            Assert.Equal(80 - curves[^1].P3.Y, vertices[^1].Y, 8);
+        }
+    }
+
+    [Theory]
+    [InlineData(20, true)]
+    [InlineData(500, false)]
+    [InlineData(2000, true)]
+    [InlineData(5000, false)]
+    public void CircularConstruction_RecoversAtSheetScale(double radius, bool ccw)
+    {
+        var center = new Vec2(9000, 8000);
+        var loop = CircleLoop(center, radius, ccw);
+        // Move the seam, preserving traversal.
+        loop = [.. loop.Skip(1), loop[0]];
+        var dxf = DxfWriter.Write(StrokeDoc(Stroke(0, true, [.. loop]), Stroke(3, true, [.. loop])));
+        var circle = Assert.Single(RecordsIn(dxf, "ENTITIES", "CIRCLE"));
+        Assert.Equal(center.X, Num(circle, 10), 7);
+        Assert.Equal(80 - center.Y, Num(circle, 20), 7);
+        Assert.Equal(radius, Num(circle, 40), 7);
+        var v = Vertices(dxf, 0);
+        Assert.Equal(4, v.Count);
+        Assert.Equal(1, Num(Assert.Single(RecordsIn(dxf, "ENTITIES", "POLYLINE")), 70));
+        for (int i = 0; i < v.Count; i++)
+        {
+            var a = new Vec2(v[i].X, v[i].Y);
+            var b = new Vec2(v[(i + 1) % v.Count].X, v[(i + 1) % v.Count].Y);
+            var (c, r, sweep) = ArcFromBulge(a, b, v[i].B);
+            Assert.True((c - new Vec2(center.X, 80 - center.Y)).Length < 1e-7);
+            Assert.Equal(radius, r, 7);
+            Assert.Equal((ccw ? -1 : 1) * Math.PI / 2, sweep, 10);
+            Assert.Equal(loop[i].P0.X, a.X, 7);
+            Assert.Equal(80 - loop[i].P0.Y, a.Y, 7);
+        }
+        var arc = ArcCubic(center, radius, 3.0, ccw ? 3.7 : 2.3);
+        var av = Vertices(DxfWriter.Write(StrokeDoc(Stroke(1, false, arc))), 0);
+        Assert.Equal(2, av.Count);
+        var (_, ar, turn) = ArcFromBulge(new(av[0].X, av[0].Y), new(av[1].X, av[1].Y), av[0].B);
+        Assert.Equal(radius, ar, 7);
+        Assert.Equal(ccw ? -.7 : .7, turn, 10);
+    }
+
+    [Fact]
+    public void CircularRecovery_RejectsNearEllipseRoundedRectangleAndPerturbedControls()
+    {
+        var loops = new List<List<CubicBezier>>
+        {
+            EllipseLoop(new(9000, 8000), 2000, 1999),
+            RectLoop(8000, 7000, 10000, 9000, false),
+            CircleLoop(new(9000, 8000), 2000, true),
+        };
+        var c = loops[2][0];
+        loops[2][0] = new(c.P0, c.P1 + new Vec2(1, 0), c.P2, c.P3);
+        foreach (var loop in loops)
+        {
+            var dxf = DxfWriter.Write(StrokeDoc(Stroke(0, true, [.. loop])));
+            Assert.Empty(RecordsIn(dxf, "ENTITIES", "CIRCLE"));
+            Assert.Single(RecordsIn(dxf, "ENTITIES", "POLYLINE"));
+        }
+    }
+
+    [Theory]
+    [InlineData(255, 63, 0, 20)]
+    [InlineData(165, 0, 0, 12)]
+    [InlineData(127, 63, 63, 15)]
+    [InlineData(76, 0, 0, 16)]
+    [InlineData(38, 19, 19, 19)]
+    [InlineData(255, 191, 127, 31)]
+    [InlineData(0, 127, 255, 150)]
+    [InlineData(102, 102, 102, 252)]
+    [InlineData(153, 153, 153, 253)]
+    [InlineData(204, 204, 204, 254)]
+    public void ConventionalAci_KnownShadesAndHueFamilies(byte r, byte g, byte b, int index) =>
+        Assert.Equal(index, DxfWriter.NearestAci(new(r, g, b, 255)));
 
     // ---- degenerate input --------------------------------------------------------
 

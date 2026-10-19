@@ -115,12 +115,18 @@ vecto samples out/                             # generate test images
 virtually every CAD tool reads. Region outlines and holes become closed zero-width
 polyline contours (R12 has no region fill — a hole is simply a second closed contour);
 line-art strokes become polylines carrying the stroke width, with circular pieces as
-vertex bulges and exact full circles as CIRCLE entities where no width is attached.
+vertex bulges and recovered full circles as CIRCLE entities where no width is attached.
+Circular recovery checks the fitter’s endpoint, tangent and control construction,
+recovering the intended analytic circle even when its cubic approximation differs
+by more than 0.1 px at large radii. Other cubics use control-hull-bounded subdivision
+and cleanup checked against all subdivision vertices (combined error ≤0.1 px).
+Export fails explicitly if the bounded subdivision budget cannot meet tolerance.
 Units are unitless: 1 image pixel = 1 drawing unit (`$INSUNITS` is written as 0 —
 advisory metadata that strict R12 readers ignore; scale to mm/inch in your CAD tool).
 Colours map to the nearest standard ACI pen on one layer per palette colour
-(`VECTO_0`, `VECTO_1`, …), so traces toggle per colour; intermediate wheel colours are
-approximated to the nearest ACI family.
+(`VECTO_0`, `VECTO_1`, …), so traces toggle per colour. The complete conventional 255-colour palette
+is searched by squared RGB distance, with ties going to the lower index; ACI 7
+changes between black and white with the CAD background.
 
 ## How it works
 
