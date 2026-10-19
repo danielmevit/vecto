@@ -194,6 +194,39 @@ public class CenterlineTests
     }
 
     [Fact]
+    public void ManyBrokenLines600Pieces_WeldInto60Strokes()
+    {
+        // 60 parallel lines, each cut into 10 pieces by 2-px gaps: 600 strokes, 540 welds.
+        // The junction pass must stay near-linear in the strokes — a pairwise scan that
+        // restarts after every weld is O(welds × strokes²) and takes minutes here — and
+        // every line must still come out as ONE straight stroke spanning all its pieces
+        var img = Make(680, 500, (x, y) => false);
+        for (int line = 0; line < 60; line++)
+        {
+            int y0 = 4 + line * 8;
+            for (int piece = 0; piece < 10; piece++)
+            {
+                int x0 = 8 + piece * 66;
+                for (int y = y0; y <= y0 + 2; y++)
+                    for (int x = x0; x < x0 + 64; x++)
+                        img.SetPixel(x, y, Black);
+            }
+        }
+        var doc = TraceLineArt(img);
+        Assert.Equal(60, doc.Strokes.Count);
+        foreach (var stroke in doc.Strokes)
+        {
+            Assert.False(stroke.Closed);
+            var seg = Assert.Single(stroke.Segments);
+            Assert.True(seg.IsLine(0.05), "a welded line must be one line, not a curve");
+            Assert.True(Math.Abs(seg.P0.Y - seg.P3.Y) <= 0.1, "welded line drifted off its row");
+            double x0 = Math.Min(seg.P0.X, seg.P3.X), x1 = Math.Max(seg.P0.X, seg.P3.X);
+            Assert.True(x0 <= 9.5 && x1 >= 664.5, $"welded span {x0:0.0}..{x1:0.0} must cover all pieces");
+        }
+        Assert.Single(doc.Regions);
+    }
+
+    [Fact]
     public void KnownWidthDiagonal45_SingleStrokeWithAccurateWidth()
     {
         // 45-degree band, three diagonal rows (x 8..56, |y-(x-8)| <= 1): the last
