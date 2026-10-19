@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **DXF export for CAD editors.** Save with `-o drawing.dxf` in the CLI or **Export DXF…**
+  in the app. ASCII DXF R12 preserves straight centerlines as two-vertex polylines with
+  stroke width, circular arcs as bulges, and full zero-width circles as CIRCLE entities.
+  Each palette colour gets its own ACI layer. Region outlines and holes, including text,
+  export as unfilled closed contours; units are 1 image pixel per drawing unit. General
+  curves stay within 0.1 px of the traced geometry, with an explicit failure if the bounded
+  subdivision budget cannot meet that tolerance. Vecto.Core adds no dependencies.
 - **Angles carry drafting intent.** Fitted line angles now read like a drafting callout:
   lines meant to be parallel come out exactly parallel, angles close to the 15-degree grid
   (0/15/30/45/60/75/90...) snap to it exactly, and every other angle is a whole degree —
