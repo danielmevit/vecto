@@ -206,6 +206,27 @@ public partial class MainWindow : Window
         ViewModel.Status = "Exported " + dlg.FileName;
     }
 
+    void OnExportDxf(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Document is not { } doc) return;
+        var dlg = new SaveFileDialog
+        {
+            Filter = "DXF|*.dxf",
+            FileName = Path.ChangeExtension(ViewModel.SuggestedName, ".dxf"),
+        };
+        if (dlg.ShowDialog(this) != true) return;
+        try
+        {
+            DxfWriter.Write(doc, dlg.FileName);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ViewModel.Status = "Could not export: " + ex.Message;
+            return;
+        }
+        ViewModel.Status = "Exported " + dlg.FileName;
+    }
+
     void OnCopySvg(object sender, RoutedEventArgs e)
     {
         if (!ViewModel.HasResult) return;
