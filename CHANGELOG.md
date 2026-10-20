@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **CAD documentation and trial roadmap.** Updated the tracing guides and recorded the
+  remaining CAD reconstruction work, plus the requirement for an app-owned 24-hour Windows
+  trial that preserves paid access.
 - **CLI stroke statistics.** `--stats` now reports stroke counts alongside chains,
   regions, nodes and palette size.
 - **DXF export for CAD editors.** Save with `-o drawing.dxf` in the CLI or **Export DXF…**
