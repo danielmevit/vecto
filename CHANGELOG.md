@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **CLI stroke statistics.** `--stats` now reports stroke counts alongside chains,
+  regions, nodes and palette size.
 - **DXF export for CAD editors.** Save with `-o drawing.dxf` in the CLI or **Export DXF…**
   in the app. ASCII DXF R12 preserves straight centerlines as two-vertex polylines with
   stroke width, circular arcs as bulges, and full zero-width circles as CIRCLE entities.
