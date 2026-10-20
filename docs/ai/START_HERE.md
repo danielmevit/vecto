@@ -8,13 +8,17 @@ no overlaps between shapes. C# / .NET 8 / WPF.
 **Current status:** v0.4.4 released 2026-10-15 (GitHub; Store update submitted by the owner); v0.4.3 was the previous release ($7.99 one-time,
 https://apps.microsoft.com/detail/9PM61P4NC8J2) and free/open-source on GitHub Releases;
 product site is Store-first at https://danielmevit.github.io/vecto/ (`site/`, deploys from
-`main`). Full snapshot in `STATUS.md`.
-**2026-10-12 review → `docs/ai/reviews/2026-10-12-review.md`:** the CLI/test build is broken by
-ImageSharp advisories (blocks Store builds too); fix plan and owner decisions are there.
-**Current priority:** (1) in-app "rate on the Store" review prompt — post-launch, highest
-leverage (see STATUS.md); (2) sub-pixel junction/corner relaxation — top engine-quality
-lever, see ROADMAP; (3) Phase 4 UX: palette editor + tracing wizard; plus tuning-backlog
-items as they bite.
+`main`). Beyond the release, `dev` carries the unreleased CAD/PDF/DXF arc (Line art mode,
+centerline strokes, clean primitives, PDF in/out, DXF R12) — see CHANGELOG "Unreleased".
+Full snapshot in `STATUS.md`.
+**Current priority:** (1) CAD architecture reassessment — current engine priority, issue #1
+stays OPEN: a bounded architecture/evaluation pass (original-scan role/geometry references,
+automatic vs oracle-text-mask prototypes, coherent primitives, source-ink ownership) before
+another broad classification patch; no winner or completion estimate yet (see STATUS.md);
+(2) in-app "rate on the Store" review prompt — post-launch,
+highest leverage; (3) sub-pixel junction/corner relaxation — top engine-quality lever, see
+ROADMAP; plus Phase 4 UX: palette editor + tracing wizard, and tuning-backlog items as
+they bite.
 
 ## Solution layout (structure beyond this → CodeGraph)
 - `Vecto.Core` — the engine, zero dependencies. Pipeline lives in `Tracer.Trace`.

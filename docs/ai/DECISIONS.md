@@ -89,3 +89,92 @@ a unique-colour census is meaningless on a noisy scan, so it stays a deliberate 
 Small-region absorption doubles as the despeckle pass on the binarized raster, so no separate
 despeckle stage exists.
 
+
+## CAD mode: interpret the geometry, don't transcribe the pixels (issue #1, VEC-50/52/52d/53)
+
+A scanned drawing is a photograph of a drawing, but the drawing itself is geometry — straight
+lines, circles, arcs, dimensions, text. Users don't want the picture re-described as vector
+shapes; they want the drawing's *intent*: one straight line as one selectable stroke with
+exactly two anchor points, a circle as one exact circle, text left legible. The acceptance
+line for the whole feature family: *"a straight wall in the drawing opens in Inkscape as one
+path with exactly two anchors, and a 30-degree line reads 30.00 degrees."*
+
+That framing drove the centerline stage, the clean-primitive and angle stages, and the
+huge-sheet spatial indexing (ALGORITHM_INDEX.md rows 5b/5c; findings and measured numbers in
+`docs/ai/reviews/2026-10-19-cad-pdf-handoff.md`). Clean weighted two-anchor straight lines,
+canonical circles on clean supported rings and filled legible text describe the *intended
+output on eligible ink* — they are not a claim of universal recognition. Majority stroke
+recovery on dense, hatched or connected scans is still open (next entry).
+
+Current priority under that framing is a bounded architecture/evaluation reassessment —
+original-scan role/geometry references, automatic versus oracle-text-mask prototypes,
+meaningful coherent primitives, explicit source-ink ownership — before another broad
+classification patch. The existing two-anchor fitting, angle rationalization and exporters
+remain useful. No architecture winner, automatic text solution or implementation completion
+estimate is established; the whole issue #1 goal stays OPEN. Acceptance is semantic, beyond
+counts: hatches/linework as coherent two-anchor strokes, true glyphs filled and legible, no
+fragment explosion, justified circle/arc intent — full-sheet majority stroke recovery
+remains unachieved as a quality-gated deliverable.
+
+## Genuine text stays filled — mandatory protection, not optional text separation
+
+Keeping real glyphs filled and legible is a mandatory acceptance condition of the CAD arc —
+it is not deferrable "text separation" work. The centerline classifier strokes a component
+only when it is thin AND long AND not a text-row glyph; everything else (text, hatching,
+wide ink) keeps the filled region treatment, because centerlining letters would destroy
+them. The deliberate cost: hatch grids are dense same-size marks, indistinguishable from
+glyph clusters by these tests, so they stay filled too, and dense low-res scans over-trigger
+the conservatism — the 1913 pump sheet traces 369 strokes against 7,079 filled paths (4.95%
+by the original 7,448-path denominator). The semantic text/graphics discrimination needed
+for CAD quality is current work (part of the architecture reassessment above); deskew and
+OCR/editable-text *recognition* may remain optional/later — glyph *protection* may not.
+
+## Angle model: drafting intent, not measurement noise (VEC-52d)
+
+Fitted line angles carry drafting intent: near-parallel lines cluster to one angle
+(wrap-aware at the 0/180° seam, `AngleClusterTolDeg` 1.0°), cluster angles within 1.5° of
+the 15° grid snap exactly, and everything else keeps its measured WHOLE degree (62.7° →
+63°). Genuinely off-grid angles are never forced onto the grid; arcs and circles are
+untouched. Whole-degree rounding is a deliberate interpretation policy — the model reads
+scan noise as intent without inventing geometry, but it does not claim that every measured
+17.2° line was certainly intended as 17°.
+
+## Circle/arc intent: exact where supported, honest cubics elsewhere
+
+The Kåsa fitter preserves shared endpoints exactly even when the fitted radii differ, so
+noisy rims come out as near-circular generic cubic pieces, and only clean supported rings
+become canonical/exact circles. Canonical circular construction on noisy connected real
+drawings remains an open LineArt issue — the fitter is shared with the general pipeline and
+is deliberately not changed for CAD. Consistent with that, the DXF writer correctly refuses
+arbitrary cubic-to-arc conversion, a perspective ellipse is never forced to a circle, and no
+claim is made that every real rim must be circular. Dated measured results (e.g. the
+VEC-53 bridge sheet) are preserved as history, not as guaranteed current behavior.
+
+## Core stays BCL-only; new third-party code lives only in Cli/App and only permissive
+
+`Vecto.Core` remains dependency-free; every new third-party byte of the CAD/PDF arc lives in
+Cli/App only. New dependencies are permissive-only — MIT / Apache-2.0 / BSD (PDFtoImage
+(MIT) over PDFium (Apache-2.0/BSD-3, non-V8 builds)) — this is the owner's distribution
+policy for the dual-licensed codebase. MuPDF and Ghostscript stay excluded by that owner
+policy; no GPL/LGPL/AGPL component may be added. The ImageSharp 4.1.3 exact pin, the committed assembly-scoped
+community key and their constraints are unchanged — see the existing entry above and
+GOTCHAS.md.
+
+## Hand-written exporters: PDF (VEC-49) and DXF R12 (VEC-54)
+
+**PDF:** `PdfWriter` is hand-written, zero-dependency and byte-deterministic — writing a
+PDF is emitting path operators, so the export writer requires no PDF parser dependency
+(true vector paths, never a raster inside a PDF). PDF input still uses PDFium through
+PDFtoImage; this is a dependency-scope fact, not a broad security claim.
+
+**DXF:** ASCII DXF **R12**, hand-written, because the candidate .NET libraries (netDxf
+among them) cannot write R12 — no library was needed or wanted. Conventions: 1 image pixel
+per drawing unit, lower-left origin with Y flipped, one LAYER per palette colour (nearest
+ACI), stroke weight as polyline global width, arcs as VERTEX bulges, exact zero-width full
+circles as CIRCLE entities, and never SPLINE. R12 constraint to state plainly: **filled
+regions and text export as unfilled closed contours** — R12 has no fill/hatch entity the
+writer targets, so no text-fill is preserved. Weighted rings are bulged polylines with
+global width; only exact zero-width full circles become CIRCLE — no universal-CIRCLE or
+text-fill claim. General curves stay within `ApproxTolerance` 0.1 px of the traced geometry,
+with an explicit failure if the bounded subdivision budget cannot meet the tolerance.
+

@@ -31,7 +31,7 @@
 - Translations by AI workers first, native-speaker review welcome; right-to-left languages only after the layout is
   checked for them. Store listings can be localized per language in Partner Center afterwards.
 
-## Next milestone (v0.4.4)
+## Milestone v0.4.4 (shipped 2026-10-15)
 Vecto stays in beta: every release is 0.4.x.
 
 ### M1 — Housekeeping
@@ -67,11 +67,30 @@ Vecto stays in beta: every release is 0.4.x.
   (VEC-46: status-bar tip; gradient check fires on the gradient logos and on none of the flat bench images)
 
 ## Later 0.4.x
-- ~~**CAD / line-art centerline mode** (GitHub issue #1)~~ **Stage 1 shipped 2026-10-18 (VEC-07c)**: `--style lineart` /
-  app "Line art" — Sauvola scan front-end + thin-stroke survival (benchmark recall/precision 0.97/0.97). **Stage 2 shipped 2026-10-18 (VEC-50):** strokes are single weighted centerline paths now. Remaining, per
-  docs/ai/research/2026-10-12-cad-mode-research.md: **centerline extraction** (strokes as single paths with a stroke
-  weight, not double outlines — the core ask), then CAD regularization (axis snap, gap jump) and DXF export; deskew and
-  text separation optional. Real-scan validation on the way (coord/artifacts/cad-real).
+- **CAD / line-art centerline mode** (GitHub issue #1) — **OPEN as a whole goal**: individual stages are shipped
+  to `dev` (unreleased), but classification and real drawing geometry quality are not complete. Stages so far,
+  each gated (verify PASS + cross-vendor review APPROVE): Stage 1 line-art scan mode (VEC-07c,
+  Sauvola front-end, recall/precision 0.97/0.97); Stage 2 centerline strokes (VEC-50, single weighted paths, text/
+  hatching stay filled); Stage 3 clean primitives (VEC-52: corner-split TLS lines → one 2-anchor path per straight
+  run, Kåsa arcs, junction weld, intersection snap); angle rationalization (VEC-52d: parallel clustering, 15° grid,
+  whole degrees); huge-sheet scaling (VEC-53, 14,444×9,632 sheet, 34.5 s measured 2026-10-19); PDF input/export (VEC-47/48b/49) and
+  DXF R12 export (VEC-54). See `docs/ai/reviews/2026-10-19-cad-pdf-handoff.md` and CHANGELOG "Unreleased".
+  **Remaining — bounded architecture/evaluation reassessment first** (before another broad classification patch):
+  original-scan role/geometry references, automatic versus oracle-text-mask prototypes, meaningful coherent
+  primitives, and explicit source-ink ownership. The existing two-anchor fitting, angle rationalization and
+  exporters remain useful; no architecture winner, automatic text solution or completion estimate is established.
+  Required outcomes: hatches/linework as coherent two-anchor strokes, true glyphs filled and legible, no fragment
+  explosion, justified circle/arc intent (the 1913 pump sheet: 369 strokes vs 7,079 filled paths, 4.95% by the
+  original path denominator — full-sheet majority remains unachieved as a quality-gated deliverable). Also:
+  app-side PDF page picker; steam-engine render for the showcase; perf watch beyond 14k-px sheets. Keeping real
+  glyphs filled and legible is mandatory; the semantic text/graphics discrimination needed for CAD quality is
+  current work. Deskew and OCR/editable-text recognition stay optional/later.
+- **App-owned 24-hour Windows trial enforcement** (owner-reported 2026-10-19): the Store-configured one-day trial
+  reportedly still allows use after 24 hours (owner observation, not an independently diagnosed platform defect).
+  The app must enforce expiry itself — at launch, during a session that crosses the deadline, and on resume — while
+  preserving paid entitlements. Scoped design still needed: trial start event, authoritative time source, persisted
+  state scope, offline policy, clock rollback/timezone, reinstall/state-reset, practical tamper limits. No hosted
+  service, deployment or account collection assumed; nothing implemented or released.
 - **Small text in JPEGs** (thin letters deform, faint captions vanish) — text-aware tracing.
 - **JPEG tile patterns** (pattern-tiles-style JPEGs): noisy smoothing per chain (fewer passes on curved chains) to
   recover the last realistic regression vs 0.4.2.
@@ -109,7 +128,9 @@ Vecto stays in beta: every release is 0.4.x.
   (Apple dev account) to avoid Gatekeeper friction
 
 ## Phase 6 — Power features
-- Exporters: PDF, EPS, DXF, AI (mirror VM's formats.dll split as Vecto.Formats)
+- Exporters: ~~PDF~~ **done on `dev`** (VEC-49, hand-written zero-dependency writer), ~~DXF~~ **done on `dev`** (VEC-54,
+  hand-written ASCII R12 — filled regions/text export as unfilled closed contours); EPS, AI remain (mirror VM's
+  formats.dll split as Vecto.Formats)
 - Segmentation editor: pencil/zap/fill-gaps (VM's edit-result tools)
 - ~~PNG/bitmap export of the vector render~~ **done 2026-07-19** (1×; scale picker later)
 - Copy vector to clipboard for design apps (SVG clipboard format works for Figma/Inkscape)
