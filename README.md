@@ -111,6 +111,10 @@ vecto bench original.svg --scale 2             # round-trip quality benchmark vs
 vecto samples out/                             # generate test images
 ```
 
+`--stats` prints the resolved parameters, stage timings and shape counts
+(chains, regions, strokes, nodes, palette) to the console — the exported
+file is byte-for-byte identical with or without it.
+
 **DXF export** (also in the app: *Export DXF…*) writes ASCII DXF R12 — the one dialect
 virtually every CAD tool reads. Region outlines and holes become closed zero-width
 polyline contours (R12 has no region fill — a hole is simply a second closed contour);

@@ -377,7 +377,7 @@ internal static class Program
         Console.WriteLine(FormattableString.Invariant(
             $"  fitTol={Math.Sqrt(p.FitToleranceSq):0.##}px corner={p.CornerThresholdDeg}deg clamp={p.SmoothClamp}px noise={p.NoiseShare:F4} noisy={(p.Noisy ? "true" : "false")} textured={(p.Textured ? "true" : "false")}"));
         Console.WriteLine(FormattableString.Invariant(
-            $"  chains={d.ChainCount} regions={d.RegionCount} nodes={d.NodeCount} palette={res.Document.Palette.Count}"));
+            $"  chains={d.ChainCount} regions={d.RegionCount} strokes={d.StrokeCount} nodes={d.NodeCount} palette={res.Document.Palette.Count}"));
         Console.WriteLine(FormattableString.Invariant(
             $"  timings: palette {d.PaletteMs} ms, segment {d.SegmentMs} ms, boundaries {d.BoundaryMs} ms, curves {d.FitMs} ms, total {d.TotalMs} ms"));
     }
