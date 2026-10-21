@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **CAD strokes appear in the Windows preview and node view.** The preview now draws
+  weighted centerlines, and the node view shows their anchors, including both ends of a
+  straight line. Filled text and exported geometry are unchanged.
 - **CAD documentation and trial roadmap.** Updated the tracing guides and recorded the
   remaining CAD reconstruction work, plus the requirement for an app-owned 24-hour Windows
   trial that preserves paid access.
