@@ -47,6 +47,7 @@ public partial class App : Application
             {
                 Environment.Exit(11);
             }
+            RenderingSmoke.Run();
             Shutdown(0);
         }
         catch (Exception ex)
