@@ -10,7 +10,10 @@ internal static class VectorRendering
     /// <summary>Vector document → WPF DrawingImage; stays crisp at any zoom because it re-renders as geometry.</summary>
     public static ImageSource ToDrawingImage(VectorDocument doc)
     {
-        var group = new DrawingGroup();
+        var group = new DrawingGroup
+        {
+            ClipGeometry = new RectangleGeometry(new Rect(0, 0, doc.Width, doc.Height)),
+        };
         // transparent canvas rect keeps bounds equal to the full image even when shapes don't cover it
         group.Children.Add(new GeometryDrawing(
             Brushes.Transparent, null, new RectangleGeometry(new Rect(0, 0, doc.Width, doc.Height))));
@@ -32,6 +35,18 @@ internal static class VectorRendering
             var brush = new SolidColorBrush(Color.FromRgb(c.R, c.G, c.B));
             brush.Freeze();
             group.Children.Add(new GeometryDrawing(brush, null, geometry));
+        }
+        foreach (var stroke in doc.Strokes)
+        {
+            if (stroke.Segments.Count == 0) continue;
+            var c = doc.Palette[stroke.PaletteIndex].Color;
+            var pen = new Pen(new SolidColorBrush(Color.FromRgb(c.R, c.G, c.B)), stroke.Width)
+            {
+                StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round,
+                LineJoin = PenLineJoin.Round,
+            };
+            pen.Freeze();
+            group.Children.Add(new GeometryDrawing(null, pen, StrokeGeometry(stroke)));
         }
         group.Freeze();
         var image = new DrawingImage(group);
@@ -74,6 +89,12 @@ internal static class VectorRendering
             geometry.Freeze();
             outlines.Children.Add(geometry);
         }
+        foreach (var stroke in doc.Strokes)
+        {
+            if (stroke.Segments.Count == 0) continue;
+            outlines.Children.Add(StrokeGeometry(stroke));
+            nodeTotal += StrokeAnchors(stroke).Count();
+        }
         outlines.Freeze();
         var pen = new Pen(new SolidColorBrush(Color.FromRgb(0x8c, 0x8c, 0x8c)), t);
         pen.Freeze();
@@ -88,6 +109,9 @@ internal static class VectorRendering
                 foreach (var loop in region.Loops)
                     foreach (var seg in loop)
                         markers.Children.Add(new RectangleGeometry(new Rect(seg.P0.X - r, seg.P0.Y - r, 2 * r, 2 * r)));
+            foreach (var stroke in doc.Strokes)
+                foreach (var anchor in StrokeAnchors(stroke))
+                    markers.Children.Add(new RectangleGeometry(new Rect(anchor.X - r, anchor.Y - r, 2 * r, 2 * r)));
             markers.Freeze();
             var fill = new SolidColorBrush(Color.FromRgb(0x0c, 0x8c, 0xe9));
             fill.Freeze();
@@ -99,6 +123,37 @@ internal static class VectorRendering
         return image;
 
         static Point P(Vec2 v) => new(v.X, v.Y);
+    }
+
+    static StreamGeometry StrokeGeometry(StrokePath stroke)
+    {
+        var geometry = new StreamGeometry();
+        using (var g = geometry.Open())
+        {
+            if (stroke.Segments.Count > 0)
+            {
+                var start = stroke.Segments[0].P0;
+                g.BeginFigure(new Point(start.X, start.Y), false, stroke.Closed);
+                foreach (var seg in stroke.Segments)
+                    g.BezierTo(new Point(seg.P1.X, seg.P1.Y), new Point(seg.P2.X, seg.P2.Y),
+                        new Point(seg.P3.X, seg.P3.Y), true, false);
+            }
+        }
+        geometry.Freeze();
+        return geometry;
+    }
+
+    static IEnumerable<Vec2> StrokeAnchors(StrokePath stroke)
+    {
+        if (stroke.Segments.Count == 0) yield break;
+        yield return stroke.Segments[0].P0;
+        for (int i = 0; i < stroke.Segments.Count; i++)
+        {
+            var end = stroke.Segments[i].P3;
+            if (i == stroke.Segments.Count - 1 && stroke.Closed && end == stroke.Segments[0].P0)
+                continue;
+            yield return end;
+        }
     }
 
     /// <summary>RasterImage (RGBA) → frozen BitmapSource, for PNG encoding.</summary>
