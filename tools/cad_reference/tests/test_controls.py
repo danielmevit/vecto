@@ -200,21 +200,97 @@ class PixelAndRegistrationContracts(unittest.TestCase):
         self.assertEqual(reg.to_mm((50, 25)), (5.0, 2.5))
         self.assertAlmostEqual(reg.len_mm(10), 1.0)
 
-    def test_inconsistent_surface_rejected(self):
-        with self.assertRaises(RegistrationError):
-            Registration.from_case({"case_id": "bad", "dpi": 254.0, "page_mm": [10, 5], "pixel_size": [100, 80],
-                                    "transform": "px = mm * dpi / 25.4"})
+    def test_generic_declaration_is_not_renderer_verification(self):
+        reg = Registration.from_case({"dpi": 254, "page_mm": [10, 5],
+                                      "pixel_size": [100, 80], "transform": "px = mm * dpi / 25.4"})
+        self.assertFalse(reg.record["renderer_verified"])
+        self.assertEqual(reg.to_px((0, 0)), (0, 0))
 
-    def test_inferred_transform_is_flagged(self):
-        reg = Registration.from_case({"case_id": "i", "page_mm": [10, 5], "pixel_size": [100, 60]})
-        self.assertTrue(reg.record["inferred"])
-        self.assertEqual(reg.to_mm((50, 30)), (5.0, 2.5))   # meet: 10 px/mm, 5 px y-offset
+    def test_ambiguous_and_unknown_transforms_rejected(self):
+        for transform in (None, "matrix(10 0 0 10 0 0)", "prefix mm * dpi / 25.4 suffix"):
+            case = {"page_mm": [10, 5], "pixel_size": [100, 60]}
+            if transform is not None:
+                case["transform"] = transform
+            with self.assertRaises(RegistrationError):
+                Registration.from_case(case)
 
     def test_geometry_frame_must_match_case(self):
         truth, geo, _ = C.controls()["line_identity"]
         bad = dict(geo, width=999)
         with self.assertRaises(ValueError):
             score_case(truth, bad, C.CASE)
+
+
+class ActualRendererRegistration(unittest.TestCase):
+    SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="60mm" viewBox="0 0 80 60"{extra}/>'
+
+    def register(self, dpi=300, size=(945, 709), extra="", **changes):
+        case = {"dpi": dpi, "page_mm": [80, 60], "pixel_size": list(size),
+                "mm_per_px": 80 / size[0],
+                "transform": "px = mm * dpi / 25.4 (independently rendered per DPI; never upscaled)",
+                "renderer": {"tool": "cairosvg", "version": "2.9.1",
+                             "output_width": size[0], "output_height": size[1]}}
+        case.update(changes)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "reference.svg")
+            with open(path, "w") as fh:
+                fh.write(self.SVG.format(extra=extra))
+            return Registration.from_case(case, path)
+
+    def test_three_instrumented_matrices_and_physical_inverse(self):
+        for dpi, size, scale, offset in (
+                (150, (472, 354), 5.9, (0, 0)),
+                (300, (945, 709), 11.8125, (0, 0.125)),
+                (600, (1890, 1417), 23.616666666666667, (1 / 3, 0))):
+            with self.subTest(dpi=dpi):
+                reg = self.register(dpi, size)
+                self.assertAlmostEqual(reg.sx, scale, places=12)
+                self.assertAlmostEqual(reg.sy, scale, places=12)
+                for got, expected in zip((reg.ox, reg.oy), offset):
+                    self.assertAlmostEqual(got, expected, places=12)
+                # Independent physical point -> pixel expectation, then inverse.
+                px = (23 * scale + offset[0], 17 * scale + offset[1])
+                for got, expected in zip(reg.to_mm(px), (23, 17)):
+                    self.assertAlmostEqual(got, expected, places=12)
+                for got, expected in zip(reg.to_px((23, 17)), px):
+                    self.assertAlmostEqual(got, expected, places=12)
+                self.assertAlmostEqual(reg.len_mm(0.5 * scale), 0.5, places=12)
+                self.assertEqual(reg.record["offset_px"], [reg.ox, reg.oy])
+                self.assertTrue(reg.record["renderer_verified"])
+
+    def test_conflicting_nominal_metadata_is_provenance(self):
+        reg = self.register(dpi=999, mm_per_px=42)
+        self.assertEqual(reg.sx, 11.8125)
+        self.assertEqual(reg.oy, 0.125)
+        self.assertEqual(reg.record["nominal_dpi"], 999)
+        self.assertEqual(reg.record["archive_mm_per_px"], 42)
+        self.assertGreater(reg.record["nominal_dpi_max_disagreement_px"], 0.5)
+
+    def test_unsupported_renderer_and_viewport_rejected(self):
+        for renderer in ({"tool": "other"},
+                         {"tool": "cairosvg", "version": "3.0", "output_width": 945, "output_height": 709},
+                         {"tool": "cairosvg", "version": "2.9.1", "output_width": 944, "output_height": 709}):
+            with self.assertRaises(RegistrationError):
+                self.register(renderer=renderer)
+        for extra in (' preserveAspectRatio="none"', ' transform="translate(1 0)"'):
+            with self.assertRaises(RegistrationError):
+                self.register(extra=extra)
+        with self.assertRaises(RegistrationError):
+            self.register(page_mm=[81, 60])
+        with self.assertRaises(RegistrationError):
+            Registration.from_case({"page_mm": [80, 60], "pixel_size": [945, 709],
+                                    "renderer": {"tool": "cairosvg", "version": "2.9.1",
+                                                 "output_width": 945, "output_height": 709}})
+
+    def test_dxf_offset_width_and_segment_share_registration(self):
+        reg = self.register()
+        point = (236.25, 118.25)  # physical (20, 10), includes 0.125px y offset
+        segment = {key: point for key in ("p0", "p1", "p2", "p3")}
+        self.assertEqual(reg.seg_to_mm(segment)["p0"], (20, 10))
+        text = f"0\nSECTION\n2\nENTITIES\n0\nCIRCLE\n10\n{point[0]}\n20\n{709-point[1]}\n40\n{5*reg.sx}\n0\nENDSEC\n0\nEOF\n"
+        result = dxf.to_mm(dxf.parse_entities(text), 709, reg)["circles"][0]
+        self.assertEqual(result["center_mm"], (20, 10))
+        self.assertAlmostEqual(result["r_mm"], 5)
 
 
 if __name__ == "__main__":

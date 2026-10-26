@@ -6,17 +6,15 @@ recovered coordinate and width goes through ONE `Registration`, so strokes,
 regions and widths always share units (the original grader fitted filled
 regions in pixels against millimetre truth).
 
-Archive cases declare `transform: "px = mm * dpi / 25.4"` (CairoSVG renders the
-mm-sized SVG at the float viewport; the integer surface only rounds the canvas
-size). That declared transform is used. The alternative a renderer could apply,
-preserveAspectRatio="xMidYMid meet" against the ROUNDED pixel surface, is also
-computed and its maximum disagreement over the page is recorded; validation
-fails if it exceeds `max_alt_disagreement_px`, because then the case metadata
-would be too ambiguous to grade at the published tolerances. Cases without a
-declared transform fall back to the meet transform and are flagged `inferred`.
+Archived CairoSVG 2.9.1 cases use the rounded output viewport's default
+xMidYMid meet transform, verified against the reference SVG. Nominal DPI and
+legacy textual descriptions are provenance, not registration evidence.
+Generic nominal transforms are declarations only, never renderer verification.
 """
 
-MAX_ALT_DISAGREEMENT_PX = 0.5
+import math
+import re
+import xml.etree.ElementTree as ET
 
 
 class RegistrationError(ValueError):
@@ -25,7 +23,7 @@ class RegistrationError(ValueError):
 
 class Registration:
     def __init__(self, sx, sy, ox=0.0, oy=0.0, method="declared", record=None):
-        if sx <= 0 or sy <= 0:
+        if not all(math.isfinite(v) for v in (sx, sy, ox, oy)) or sx <= 0 or sy <= 0:
             raise RegistrationError("non-positive scale")
         self.sx, self.sy, self.ox, self.oy = sx, sy, ox, oy   # px per mm, px offset
         self.method = method
@@ -57,38 +55,57 @@ class Registration:
         return cls(1.0, 1.0, method="unit")
 
     @classmethod
-    def from_case(cls, case):
+    def from_case(cls, case, reference_svg=None):
         pw, ph = case["page_mm"]
         W, H = case["pixel_size"]
+        if not all(math.isfinite(v) and v > 0 for v in (pw, ph, W, H)):
+            raise RegistrationError("invalid page or pixel dimensions")
         meet = min(W / pw, H / ph)
         mox, moy = (W - pw * meet) / 2.0, (H - ph * meet) / 2.0
         declared = case.get("transform", "")
         rec = {"page_mm": [pw, ph], "pixel_size": [W, H],
-               "declared_transform": declared or None}
-        if "dpi" in case and "mm * dpi / 25.4" in declared.replace("  ", " "):
+               "declared_transform": declared or None,
+               "nominal_dpi": case.get("dpi"),
+               "archive_mm_per_px": case.get("mm_per_px")}
+        renderer = case.get("renderer")
+        if renderer is not None:
+            if (renderer.get("tool") != "cairosvg" or renderer.get("version") != "2.9.1"
+                    or renderer.get("output_width") != W or renderer.get("output_height") != H):
+                raise RegistrationError("unsupported renderer/version or conflicting output dimensions")
+            if reference_svg is None:
+                raise RegistrationError("CairoSVG registration requires reference SVG viewport evidence")
+            root = ET.parse(reference_svg).getroot()
+            try:
+                vb = [float(v) for v in re.split(r"[ ,]+", root.attrib["viewBox"].strip())]
+                width = float(root.attrib["width"].removesuffix("mm"))
+                height = float(root.attrib["height"].removesuffix("mm"))
+            except (KeyError, ValueError) as exc:
+                raise RegistrationError("unsupported SVG viewport") from exc
+            if (root.tag != "{http://www.w3.org/2000/svg}svg" or vb != [0, 0, pw, ph]
+                    or not root.attrib["width"].endswith("mm")
+                    or not root.attrib["height"].endswith("mm")
+                    or (width, height) != (pw, ph)
+                    or root.get("preserveAspectRatio", "xMidYMid meet").strip() != "xMidYMid meet"
+                    or "transform" in root.attrib):
+                raise RegistrationError("unsupported SVG viewport, aspect ratio or root transform")
+            s, ox, oy, method = meet, mox, moy, "cairosvg_2.9.1_rounded_viewport_meet"
+            rec.update({"renderer": dict(renderer), "viewbox": vb,
+                        "renderer_verified": True, "inferred": False})
+        elif declared == "px = mm * dpi / 25.4":
             s = case["dpi"] / 25.4
-            reg = cls(s, s, 0.0, 0.0, method="declared_dpi", record=rec)
-            worst = 0.0
-            for corner in ((0, 0), (pw, 0), (0, ph), (pw, ph), (pw / 2, ph / 2)):
-                a = reg.to_px(corner)
-                b = (corner[0] * meet + mox, corner[1] * meet + moy)
-                worst = max(worst, abs(a[0] - b[0]), abs(a[1] - b[1]))
-            rec.update({"px_per_mm": s, "alternative": "preserveAspectRatio xMidYMid meet on rounded surface",
-                        "alt_px_per_mm": meet, "alt_offset_px": [mox, moy],
-                        "max_alt_disagreement_px": round(worst, 5),
-                        "inferred": False})
-            if worst > MAX_ALT_DISAGREEMENT_PX:
-                raise RegistrationError(f"{case.get('case_id')}: declared and meet transforms disagree by {worst:.3f}px")
-            if "mm_per_px" in case:
-                # archive cases store mm_per_px = page_width_mm / pixel_width (rounded
-                # surface), which is NOT the declared dpi transform; record the gap.
-                gap = max(abs(case["mm_per_px"] * s - 1.0) * pw * s, abs(case["mm_per_px"] * s - 1.0) * ph * s)
-                rec["archive_mm_per_px"] = case["mm_per_px"]
-                rec["archive_mm_per_px_max_disagreement_px"] = round(gap, 5)
-                if gap > MAX_ALT_DISAGREEMENT_PX:
-                    raise RegistrationError(f"{case.get('case_id')}: archive mm_per_px disagrees by {gap:.3f}px")
-            reg.record = rec
-            return reg
-        rec.update({"px_per_mm": meet, "offset_px": [mox, moy], "inferred": True,
-                    "note": "no declared transform: inferred preserveAspectRatio meet"})
-        return cls(meet, meet, mox, moy, method="inferred_meet", record=rec)
+            ox, oy, method = 0.0, 0.0, "declared_dpi"
+            rec.update({"renderer_verified": False, "inferred": False,
+                        "note": "explicit nominal declaration; actual renderer not verified"})
+        elif declared:
+            raise RegistrationError("unsupported explicit transform without known renderer evidence")
+        else:
+            raise RegistrationError("ambiguous registration: no explicit transform or known renderer")
+        rec.update({"px_per_mm": s, "offset_px": [ox, oy]})
+        if "dpi" in case:
+            nominal = case["dpi"] / 25.4
+            rec["nominal_dpi_max_disagreement_px"] = max(
+                abs(x * (s - nominal) + ox) for x in (0, pw))
+            rec["nominal_dpi_max_disagreement_px"] = max(
+                rec["nominal_dpi_max_disagreement_px"],
+                *(abs(y * (s - nominal) + oy) for y in (0, ph)))
+        return cls(s, s, ox, oy, method=method, record=rec)

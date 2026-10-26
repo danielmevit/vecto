@@ -49,9 +49,11 @@ LIMITATIONS = """# Limitations of the CAD reference evaluator v2
   POLYLINE/VERTEX bulges, LWPOLYLINE). Cubic SVG paths are never treated as proof of
   analytic export.
 * Not scored: {not_scored}
-* Registration uses each case's declared transform (px = mm*dpi/25.4). The
-  archive's stored mm_per_px (page/rounded surface) and a preserveAspectRatio-meet
-  alternative are recorded per case with their pixel disagreement (< 0.5 px).
+* Archived CairoSVG 2.9.1 registration uses the rounded viewport default
+  xMidYMid meet matrix, checked against each reference SVG. Nominal DPI,
+  textual transform and stored mm_per_px are retained as provenance only.
+  Other renderers, versions or SVG viewport configurations are not verified and
+  are rejected. Generic explicit nominal transforms are declarations only.
 * Text and solid zones are excluded from stroke precision; glyph legibility is
   not judged by this tool.
 * Tolerances are the frozen VEC-79 bases; v2 adds explicit coverage fractions.
@@ -264,7 +266,7 @@ def main(argv=None):
         geo = load(os.path.join(cd, "geometry.json"))
         with open(os.path.join(cd, "recovered.dxf"), encoding="utf-8", errors="replace") as fh:
             dxf_text = fh.read()
-        res = score_case(truth, geo, case, reg=Registration.from_case(case), dxf_text=dxf_text,
+        res = score_case(truth, geo, case, reg=Registration.from_case(case, os.path.join(archive, scene["dir"], "reference.svg")), dxf_text=dxf_text,
                          input_png=os.path.join(cd, "input.png"), recovered_png=os.path.join(cd, "recovered.png"))
         dump(os.path.join(out, "cases", f"{cid}.json"), res)
         results.append(res)
@@ -283,8 +285,8 @@ def main(argv=None):
     summary = {"schema": "vecto.cad-ref.summary/2", "cases": [
         {"case_id": r["case_id"], "metrics": r["metrics"], "counts": r["counts"],
          "image": {k: r["image"].get(k) for k in ("iou", "ink_pixels_input", "ink_pixels_recovered")},
-         "registration_disagreement_px": {k: r["registration"].get(k) for k in
-                                          ("max_alt_disagreement_px", "archive_mm_per_px_max_disagreement_px")}}
+         "registration": r["registration"], "registration_disagreement_px": {k: r["registration"].get(k) for k in
+                                          ("nominal_dpi_max_disagreement_px",)}}
         for r in results]}
     dump(os.path.join(out, "summary.json"), summary)
     tool_files = {os.path.relpath(os.path.join(dp, f), HERE): sha(os.path.join(dp, f))

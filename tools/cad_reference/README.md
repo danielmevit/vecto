@@ -11,8 +11,8 @@ truth / case / live-geometry schemas are read unchanged.
 ## Command
 
 ```
-python3 tools/cad_reference/validate.py --archive <vec79-partial archive> --out _bench/cad-evaluator-v2
-python3 -m unittest discover -s tools/cad_reference/tests -v
+python3 -B tools/cad_reference/validate.py --archive <vec79-partial archive> --out _bench/cad-evaluator-v2
+python3 -B -m unittest discover -s tools/cad_reference/tests -v
 ```
 
 `validate.py` runs the control suite, verifies the scene manifest and every
@@ -65,11 +65,32 @@ coverage + closure; unmatched curved/closed strokes and DXF circles counted as
 unsupported; DXF parser flushes on every entity transition and at EOF and
 accepts exact bulge circles; width as its own dimension; pixel counts are pixels
 (not 8x bits); one registration for strokes, regions and widths, taken from the
-case's declared transform with recorded disagreement to the archive `mm_per_px`
-and a preserveAspectRatio-meet alternative.
+actual rounded CairoSVG viewport transform, including offsets.
 
 ## Limitations
 
 Three synthetic families only (A, B, C); 18 cases. Not scored: drafting-angle
 policy, tangency, hatch pitch/angle, text OCR/legibility, solid-fill fidelity
 beyond supporting image measures. An unseen source family is the next milestone.
+
+## Registration contract
+
+Archived CairoSVG **2.9.1** cases require the reference SVG: root width/height
+in mm matching `page_mm`, viewBox `0 0 page_width page_height`, default
+`xMidYMid meet`, no root transform, and recorded output dimensions matching
+`pixel_size`. The scale is `min(pixel_width/page_width, pixel_height/page_height)`;
+centering offsets are half the remaining viewport space. This is the bounded
+renderer path verified by direct `Surface.set_context_size` instrumentation.
+At 150/300/600 DPI for the 80x60mm archive, scale/offset are respectively
+`5.9 / (0,0)`, `11.8125 / (0,0.125)`, and `23.616666666666667 / (1/3,0)`.
+
+Nominal DPI, the original textual transform and stored `mm_per_px` remain
+unchanged provenance in receipts; they do not override this matrix. All stroke,
+region, width, exclusion-box and DXF coordinates share this registration.
+The review page copies original archive rasters/exports without re-rendering;
+any overlay coordinates must use the same `to_px` inverse.
+Unknown renderer versions/configurations and ambiguous missing transforms fail
+closed. Without renderer metadata, the exact generic declaration
+`px = mm * dpi / 25.4` means precisely nominal scale and zero offset; its receipt
+explicitly says the renderer is unverified. No arbitrary future renderer claim
+is implied. Matching tolerances and geometry algorithms are unchanged.
