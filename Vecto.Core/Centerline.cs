@@ -139,7 +139,7 @@ public static partial class Centerline
             c.MaxDim = Math.Max(c.MaxX - c.MinX + 1, c.MaxY - c.MinY + 1);
             c.Centerline = c.Width <= ThinFactor * median + ThinSlack && c.MaxDim >= LongFactor * median;
         }
-        MarkTextRows(comps, median);
+        MarkTextRows(comps, median, widthAt);
 
         int pruneLen = Math.Max(2, (int)Math.Ceiling(2 * median));
         int growLen = Math.Max(4, (int)Math.Ceiling(median));
@@ -280,12 +280,22 @@ public static partial class Centerline
     }
 
     /// <summary>
-    /// Thin+long components of glyph size that sit in a dense row of same-size neighbours are
-    /// text (Fletcher–Kasturi): they stay filled — centerlining glyphs destroys legibility.
+    /// Repeated glyph-sized components stay filled before either extraction path. The
+    /// component ridge median supplies a second scale when hairlines dominate the image.
+    /// Compactness excludes long open hatch lines from that additional candidate set;
+    /// row context, rather than closure alone, distinguishes glyphs from isolated CAD rings.
     /// </summary>
-    static void MarkTextRows(List<Comp> comps, double median)
+    static void MarkTextRows(List<Comp> comps, double median, double[] widthAt)
     {
-        var cand = comps.Where(c => c.Centerline && c.MaxDim <= TextMaxFactor * median).OrderBy(c => c.MinY).ToList();
+        bool Candidate(Comp c)
+        {
+            if (c.Centerline && c.MaxDim <= TextMaxFactor * median) return true;
+            int shortDim = Math.Min(c.MaxX - c.MinX + 1, c.MaxY - c.MinY + 1);
+            if (c.MaxDim > 4 * shortDim) return false;
+            var widths = c.Pixels.Where(i => widthAt[i] > 0).Select(i => widthAt[i]).ToList();
+            return widths.Count > 0 && c.MaxDim <= TextMaxFactor * Median(widths);
+        }
+        var cand = comps.Where(Candidate).OrderBy(c => c.MinY).ToList();
         if (cand.Count < TextPeerMin + 1) return;
         int maxDim = cand.Max(c => c.MaxDim);
         var miny = new double[cand.Count];
@@ -305,7 +315,7 @@ public static partial class Centerline
                 if (oi == ci || !Peer(c, o)) continue;
                 if (++peers >= TextPeerMin) break;
             }
-            if (peers >= TextPeerMin) c.Centerline = false;
+            if (peers >= TextPeerMin) { c.TextRow = true; c.Centerline = false; }
         }
     }
 
@@ -1259,6 +1269,7 @@ public static partial class Centerline
         public int Id;                                    // set after all components exist
         public double Width;                               // 2×max DT − 1
         public int MaxDim;
+        public bool TextRow;
         public bool Centerline;
         public bool Emitted;
     }

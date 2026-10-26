@@ -16,10 +16,10 @@ public static partial class Centerline
     /// this factor below / above the run's median width.</summary>
     public const double LocalUniformLow = 0.6, LocalUniformHigh = 1.4;
 
-    /// <summary>Only components larger than any glyph go local: glyph-sized components never
-    /// reach this pass, so text keeps the existing (filled) treatment.</summary>
+    /// <summary>Admit wide components beyond the global text scale only after row protection.
+    /// Size relative to a global hairline median alone cannot exclude larger glyphs.</summary>
     static bool LocalEligible(Comp c, double median) =>
-        c.MaxDim > TextMaxFactor * median && c.Width > ThinFactor * median + ThinSlack;
+        !c.TextRow && c.MaxDim > TextMaxFactor * median && c.Width > ThinFactor * median + ThinSlack;
 
     static void ExtractLocal(Comp c, int[] comp, bool[] skel, double[] widthAt, int[] dtSq, bool[] inkMask,
         int ink, double median, int pruneLen, int growLen,

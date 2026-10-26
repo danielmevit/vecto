@@ -422,6 +422,60 @@ public class CenterlineTests
         AssertInkRetained(img, doc, 2 * scale);
     }
 
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(2, 1)]
+    [InlineData(1, 2)]
+    [InlineData(2, 2)]
+    public void MixedScaleClosedGlyphRow_StaysFilled_WithHairline(int hairlineWidth, int scale)
+    {
+        // Same two-counter block glyph geometry for both hairline controls. A very
+        // long hairline controls the global median without changing glyph stroke size.
+        var img = Make(1000 * scale, 180 * scale, (x, y) =>
+        {
+            int xx = x / scale, yy = y / scale;
+            if (xx >= 10 && xx < 990 && yy >= 15 && yy < 15 + hairlineWidth) return true;
+            int gx = (xx - 60) % 30;
+            return xx >= 60 && xx < 194 && gx < 14 && yy >= 60 && yy < 100 &&
+                (gx < 2 || gx >= 12 || yy < 62 || yy >= 98 || yy is >= 79 and < 82);
+        });
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes);
+        Assert.DoesNotContain(doc.Strokes, s => s.Segments.Any(g => g.P0.Y >= 50 * scale || g.P3.Y >= 50 * scale));
+        // Five black glyph regions, ten white counters and the surrounding paper.
+        Assert.Equal(16, doc.Regions.Count);
+        var fill = Rasterizer.Render(new VectorDocument { Width = doc.Width, Height = doc.Height,
+            Palette = doc.Palette, Regions = doc.Regions, Strokes = [] });
+        for (int i = 0; i < 5; i++)
+        {
+            int left = 60 + 30 * i;
+            foreach (int yy in new[] { 60, 80, 99 })
+                Assert.True(fill.GetPixel((left + 7) * scale, yy * scale).R < 128);
+            foreach (int yy in new[] { 70, 90 })
+            {
+                Assert.True(fill.GetPixel(left * scale, yy * scale).R < 128);
+                Assert.True(fill.GetPixel((left + 13) * scale, yy * scale).R < 128);
+                Assert.True(fill.GetPixel((left + 7) * scale, yy * scale).R > 128);
+            }
+        }
+    }
+
+    [Fact]
+    public void MixedScaleLongOpenParallelLines_StillReachLocalExtraction()
+    {
+        var img = Make(1100, 240, (x, y) =>
+            (x >= 10 && x < 1090 && y == 10) ||
+            (Enumerable.Range(0, 5).Any(i =>
+                (x >= 100 && x < 300 && y >= 50 + i * 35 && y < 52 + i * 35) ||
+                (x >= 100 && x < 110 && y >= 46 + i * 35 && y < 56 + i * 35))));
+        var doc = TraceLineArt(img);
+        Assert.Equal(6, doc.Strokes.Count);
+        for (int i = 0; i < 5; i++)
+            Assert.Contains(doc.Strokes, s => s.Segments.Any(g => Math.Abs(g.P0.Y - (51 + i * 35)) < 2 &&
+                (g.P3 - g.P0).Length > 180));
+        AssertInkRetained(img, doc, 1);
+    }
+
     // ---- VEC-52 stage 3: CAD regularization ----
 
     [Fact]
