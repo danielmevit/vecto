@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from cad_reference import controls as C  # noqa: E402
 from cad_reference import dxf, pngio  # noqa: E402
 from cad_reference.geometry import bulge_arc, seg_is_finite_line  # noqa: E402
-from cad_reference.grade import image_measures, score_case  # noqa: E402
+from cad_reference.grade import build_strokes, image_measures, score_case  # noqa: E402
 from cad_reference.registration import Registration, RegistrationError  # noqa: E402
 
 
@@ -281,6 +281,17 @@ class ActualRendererRegistration(unittest.TestCase):
             Registration.from_case({"page_mm": [80, 60], "pixel_size": [945, 709],
                                     "renderer": {"tool": "cairosvg", "version": "2.9.1",
                                                  "output_width": 945, "output_height": 709}})
+
+    def test_strokes_regions_and_widths_share_offset_transform(self):
+        reg = self.register()
+        seg = {key: [236.25, 118.25] for key in ("p0", "p1", "p2", "p3")}
+        geo = {"strokes": [{"segments": [seg], "width": 5.90625}],
+               "regions": [{"loops": [{"segments": [seg]}]}]}
+        strokes, regions = build_strokes(geo, reg)
+        self.assertEqual(strokes[0]["segments"][0]["p0"], (20, 10))
+        self.assertEqual(strokes[0]["width_mm"], 0.5)
+        self.assertEqual(strokes[0]["bbox"], regions[0]["bbox"])
+        self.assertEqual(regions[0]["bbox"], (20, 10, 20, 10))
 
     def test_dxf_offset_width_and_segment_share_registration(self):
         reg = self.register()
