@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Controlled CAD comparison tools.** Developer checks compare saved conversions with
+  frozen vector references in physical units, separating editable lines, curves, widths
+  and junctions. Regression controls catch missing geometry, incorrect registration and
+  invalid measurement output; visual evidence stays separate from geometric scores.
 - **Solid black marks stay filled in Line art mode.** Broad black marks no longer
   lose their interiors during scan cleanup. Very dark opaque pixels are retained as
   ink; transparent backgrounds remain paper. Other tracing styles are byte-identical.
