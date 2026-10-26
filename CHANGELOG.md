@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Solid black marks stay filled in Line art mode.** Broad black marks no longer
+  lose their interiors during scan cleanup. Very dark opaque pixels are retained as
+  ink; transparent backgrounds remain paper. Other tracing styles are byte-identical.
 - **CAD strokes appear in the Windows preview and node view.** The preview now draws
   weighted centerlines, and the node view shows their anchors, including both ends of a
   straight line. Filled text and exported geometry are unchanged.
