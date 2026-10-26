@@ -71,6 +71,98 @@ public class LineArtTests
     }
 
     [Fact]
+    public void InkMask_BroadSolidBlackSquare_CenterAndEdgeStayInk()
+    {
+        // VEC-89: a solid black mark wider than the Sauvola window used to erase its own
+        // interior — every window fully inside the mark is uniformly black, so
+        // T = m·(1 + k·(δ/R − 1)) collapses to 0 and "0 < 0" is false. The interior must
+        // stay ink; the edge (mixed window) always was.
+        const int w = 96, h = 96;
+        var img = Make(w, h, (x, y) => x is >= 16 and < 80 && y is >= 16 and < 80 ? Black : White);
+        var ink = ScanPreprocess.InkMask(img);
+        Assert.True(ink[48 * w + 48], "solid centre must be ink");
+        Assert.True(ink[16 * w + 48] && ink[79 * w + 48], "left and right edges must be ink");
+        Assert.True(ink[48 * w + 16] && ink[48 * w + 79], "top and bottom edges must be ink");
+        int inkCount = 0;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                bool inside = x is >= 16 and < 80 && y is >= 16 and < 80;
+                if (inside) Assert.True(ink[y * w + x], $"solid pixel {x},{y} must be ink");
+                else Assert.False(ink[y * w + x], $"stray ink at {x},{y}");
+                if (ink[y * w + x]) inkCount++;
+            }
+        Assert.Equal(64 * 64, inkCount);
+    }
+
+    [Fact]
+    public void InkMask_AllBlackImage_IsAllInk()
+    {
+        // the degenerate boundary of VEC-89: with no paper anywhere Sauvola has no contrast
+        // to work with, and the whole canvas used to binarize to paper
+        var img = Make(40, 40, (_, _) => Black);
+        var ink = ScanPreprocess.InkMask(img);
+        for (int i = 0; i < ink.Length; i++)
+            Assert.True(ink[i], $"pixel {i % 40},{i / 40} must be ink");
+    }
+
+    [Fact]
+    public void InkMask_TransparentBlack_StaysPaper()
+    {
+        // control for VEC-89: transparent black is the void of a transparent input, not
+        // ink — the solid-ink preservation must not override the alpha rule
+        var img = Make(64, 64, (x, _) => x < 32 ? new Rgba32(0, 0, 0, 0) : White);
+        var ink = ScanPreprocess.InkMask(img);
+        for (int i = 0; i < ink.Length; i++)
+            Assert.False(ink[i], $"transparent black and white paper must both stay paper, got ink at {i % 64},{i / 64}");
+    }
+
+    [Fact]
+    public void LineArt_SolidBlackSquare_RendersSolidBlackCentre()
+    {
+        // end-to-end VEC-89: through the real LineArt pipeline and rasterizer the solid
+        // mark must stay a filled black region — not dissolve into a hollow ring
+        const int w = 96, h = 96;
+        var img = Make(w, h, (x, y) => x is >= 16 and < 80 && y is >= 16 and < 80 ? Black : White);
+        var res = Tracer.Trace(img, new TraceOptions { Style = ImageStyle.LineArt });
+        var rendered = Rasterizer.Render(res.Document);
+        var px = rendered.Pixels;
+        bool IsBlack(int x, int y)
+        {
+            int i = (y * w + x) * 4;
+            return px[i + 3] >= 128 && px[i] < 128;
+        }
+        Assert.True(IsBlack(48, 48), "rendered solid centre must be black");
+        Assert.False(IsBlack(4, 4), "white background must stay white");
+        Assert.False(IsBlack(91, 91), "white background must stay white");
+        Assert.False(IsBlack(4, 91), "white background must stay white");
+        Assert.False(IsBlack(91, 4), "white background must stay white");
+        int blackInCore = 0;
+        for (int y = 24; y <= 71; y++)
+            for (int x = 24; x <= 71; x++)
+                if (IsBlack(x, y)) blackInCore++;
+        Assert.True(blackInCore >= 40 * 40, $"core {blackInCore}/2304 black — the mark rendered hollow");
+    }
+
+    [Fact]
+    public void LineArt_TransparentBlackSquare_RendersNoInk()
+    {
+        // end-to-end control for VEC-89: a transparent black square must not become a
+        // traced mark just because its RGB is black
+        const int w = 96, h = 96;
+        var img = Make(w, h, (x, y) => x is >= 16 and < 80 && y is >= 16 and < 80
+            ? new Rgba32(0, 0, 0, 0) : White);
+        var res = Tracer.Trace(img, new TraceOptions { Style = ImageStyle.LineArt });
+        var px = Rasterizer.Render(res.Document).Pixels;
+        for (int y = 20; y < 76; y++)
+            for (int x = 20; x < 76; x++)
+            {
+                int i = (y * w + x) * 4;
+                Assert.False(px[i + 3] >= 128 && px[i] < 128, $"ink rendered at {x},{y}");
+            }
+    }
+
+    [Fact]
     public void BridgeDiagonalContacts_45DegreeLine_BecomesOneComponent()
     {
         const int w = 64, h = 64;
