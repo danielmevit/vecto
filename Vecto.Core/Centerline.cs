@@ -34,7 +34,7 @@ public sealed class StrokePath
 /// families unify on one angle, near-grid angles snap onto the 15° grid, and everything
 /// else rounds to a whole degree.
 /// </summary>
-public static class Centerline
+public static partial class Centerline
 {
     /// <summary>A component is thin when its widest stroke is at most this × the image's median width.</summary>
     public const double ThinFactor = 2.0;
@@ -185,6 +185,14 @@ public static class Centerline
             if (c.Centerline && c.Emitted)
                 foreach (int i in c.Pixels)
                     labels[i] = paper;
+        // VEC95: mixed-width components (a solid attached to thin linework) give up only the
+        // ink their supported local runs actually stroke; solids and the rest stay filled
+        foreach (var c in comps)
+            if (!c.Centerline && LocalEligible(c, median))
+            {
+                ct.ThrowIfCancellationRequested();
+                ExtractLocal(c, comp, skel, widthAt, dtSq, inkMask, labels, paper, ink, median, pruneLen, growLen, p, w, h, strokes);
+            }
         // stage 3 junction pass: weld collinear pieces split by junctions or scan gaps,
         // then land every line endpoint that ends against another line on the exact
         // intersection — the strokes a CAD user sees cross and meet cleanly
