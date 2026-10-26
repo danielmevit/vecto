@@ -460,6 +460,47 @@ public class CenterlineTests
         }
     }
 
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(30, 1)]
+    [InlineData(37, 1)]
+    [InlineData(45, 1)]
+    [InlineData(90, 1)]
+    [InlineData(37, 2)]
+    [InlineData(90, 2)]
+    public void LocalClosedGlyphRow_AnyOrientationStaysFilled(int degrees, int scale)
+    {
+        double angle = degrees * Math.PI / 180, cs = Math.Cos(angle), sn = Math.Sin(angle);
+        var img = Make(1000 * scale, 750 * scale, (x, y) =>
+        {
+            double xx = (x + 0.5) / scale, yy = (y + 0.5) / scale;
+            if (xx >= 10 && xx < 990 && yy >= 15 && yy < 16) return true;
+            double u = (xx - 350) * cs + (yy - 250) * sn;
+            double v = -(xx - 350) * sn + (yy - 250) * cs;
+            double gx = u % 30;
+            return u >= 0 && u < 134 && gx < 14 && v >= 0 && v < 40 &&
+                (gx < 2 || gx >= 12 || v < 2 || v >= 38 || v is >= 19 and < 22);
+        });
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes); // only the independent hairline; zero glyph strokes
+        Assert.All(doc.Strokes, s => Assert.All(s.Segments, g =>
+            Assert.True(g.P0.Y < 30 * scale && g.P3.Y < 30 * scale)));
+        Assert.Equal(16, doc.Regions.Count);
+        var fill = Rasterizer.Render(new VectorDocument { Width = doc.Width, Height = doc.Height,
+            Palette = doc.Palette, Regions = doc.Regions, Strokes = [] });
+        for (int i = 0; i < 5; i++)
+        {
+            // Interior crossbar and counter samples transform with the source glyph.
+            foreach (var (v, black) in new[] { (20.5, true), (10.0, false), (30.0, false) })
+            {
+                double u = 30 * i + 7;
+                int x = (int)((350 + u * cs - v * sn) * scale);
+                int y = (int)((250 + u * sn + v * cs) * scale);
+                Assert.Equal(black, fill.GetPixel(x, y).R < 128);
+            }
+        }
+    }
+
     [Fact]
     public void MixedScaleLongOpenParallelLines_StillReachLocalExtraction()
     {
@@ -474,6 +515,52 @@ public class CenterlineTests
             Assert.Contains(doc.Strokes, s => s.Segments.Any(g => Math.Abs(g.P0.Y - (51 + i * 35)) < 2 &&
                 (g.P3 - g.P0).Length > 180));
         AssertInkRetained(img, doc, 1);
+    }
+
+    [Fact]
+    public void VerticalCadCircleRowWithDrawingLine_KeepsFiveClosedStrokes()
+    {
+        var img = Make(5000, 1000, (x, y) =>
+        {
+            double xx = x + 0.5, yy = y + 0.5;
+            if (xx >= 10 && xx < 4990 && yy >= 15 && yy < 20) return true;
+            return Enumerable.Range(0, 5).Any(i =>
+            {
+                double dx = xx - 200, dy = yy - (150 + 170 * i);
+                double r = Math.Sqrt(dx * dx + dy * dy);
+                return r is >= 60.5 and < 69.5;
+            });
+        });
+        var doc = TraceLineArt(img);
+        Assert.Equal(6, doc.Strokes.Count);
+        Assert.Equal(5, doc.Strokes.Count(s => s.Closed));
+        Assert.Single(doc.Regions);
+    }
+
+    [Fact]
+    public void DiagonalOpenParallelLinesAttachedToSolids_StillReachLocalExtraction()
+    {
+        double cs = Math.Cos(Math.PI / 4), sn = Math.Sin(Math.PI / 4);
+        var img = Make(1100, 800, (x, y) =>
+        {
+            double xx = x + 0.5, yy = y + 0.5;
+            if (xx >= 10 && xx < 1090 && yy >= 10 && yy < 11) return true;
+            double u = (xx - 350) * cs + (yy - 250) * sn;
+            double v = -(xx - 350) * sn + (yy - 250) * cs;
+            return Enumerable.Range(0, 5).Any(i =>
+                (u >= 100 && u < 300 && v >= 50 + i * 35 && v < 52 + i * 35) ||
+                (u >= 100 && u < 110 && v >= 46 + i * 35 && v < 56 + i * 35));
+        });
+        var doc = TraceLineArt(img);
+        for (int i = 0; i < 5; i++)
+        {
+            double row = 51 + i * 35;
+            Assert.Contains(doc.Strokes, s => s.Segments.Any(g =>
+                (g.P3 - g.P0).Length > 170 &&
+                Math.Abs(-(g.P0.X - 350) * sn + (g.P0.Y - 250) * cs - row) < 3 &&
+                Math.Abs(-(g.P3.X - 350) * sn + (g.P3.Y - 250) * cs - row) < 3));
+        }
+        AssertInkRetained(img, doc, 2);
     }
 
     // ---- VEC-52 stage 3: CAD regularization ----

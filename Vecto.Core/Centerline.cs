@@ -140,6 +140,7 @@ public static partial class Centerline
             c.Centerline = c.Width <= ThinFactor * median + ThinSlack && c.MaxDim >= LongFactor * median;
         }
         MarkTextRows(comps, median, widthAt);
+        MarkOrientedLocalTextRows(comps, median, widthAt, w);
 
         int pruneLen = Math.Max(2, (int)Math.Ceiling(2 * median));
         int growLen = Math.Max(4, (int)Math.Ceiling(median));

@@ -21,6 +21,101 @@ public static partial class Centerline
     static bool LocalEligible(Comp c, double median) =>
         !c.TextRow && c.MaxDim > TextMaxFactor * median && c.Width > ThinFactor * median + ThinSlack;
 
+    /// <summary>
+    /// Protect only new local admissions using a common row direction through component
+    /// centres. Axis-aligned boxes may overlap in a diagonal word; ink need not. Existing
+    /// whole-component geometry retains its classification. Previously protected glyphs
+    /// can still supply context. This is bounded row evidence, not closure-based OCR.
+    /// </summary>
+    static void MarkOrientedLocalTextRows(List<Comp> comps, double median, double[] widthAt, int w)
+    {
+        var candidates = new List<Comp>();
+        foreach (var c in comps)
+        {
+            // The component's own width prevents a long drawing hairline from setting
+            // the glyph scale. Intrinsic compactness also excludes DIAGONAL hatches,
+            // whose axis-aligned box alone can look square.
+            var widths = new List<double>();
+            double cx = (c.MinX + c.MaxX) * 0.5, cy = (c.MinY + c.MaxY) * 0.5;
+            double xx = 0, xy = 0, yy = 0;
+            double minRadiusSq = double.PositiveInfinity, maxRadiusSq = 0;
+            foreach (int i in c.Pixels)
+            {
+                if (widthAt[i] > 0) widths.Add(widthAt[i]);
+                double x = i % w - cx, y = i / w - cy;
+                xx += x * x; xy += x * y; yy += y * y;
+                double r2 = x * x + y * y;
+                minRadiusSq = Math.Min(minRadiusSq, r2); maxRadiusSq = Math.Max(maxRadiusSq, r2);
+            }
+            // Diagonal ridges can underestimate the own median (stair-step widths).
+            // The component EDT maximum is a conservative fallback, still gated by
+            // intrinsic compactness and a consistent four-peer row.
+            if (widths.Count == 0 || c.MaxDim > TextMaxFactor * Math.Max(Median(widths), c.Width)) continue;
+            // A uniform thin circular annulus is positive CAD geometry evidence, even
+            // in a repeated row. Closure alone supplies neither this exception nor text
+            // evidence. Round O-like letters remain an unavoidable ambiguous family.
+            double inner = Math.Sqrt(minRadiusSq), outer = Math.Sqrt(maxRadiusSq);
+            int boxWidth = c.MaxX - c.MinX + 1, boxHeight = c.MaxY - c.MinY + 1;
+            bool roundBox = Math.Max(boxWidth, boxHeight) <= 1.1 * Math.Min(boxWidth, boxHeight);
+            if (roundBox && inner > 0 && outer - inner <= 0.25 * (outer + inner) * 0.5) continue;
+            double angle = 0.5 * Math.Atan2(2 * xy, xx - yy);
+            double cs = Math.Cos(angle), sn = Math.Sin(angle);
+            double minU = double.PositiveInfinity, maxU = double.NegativeInfinity;
+            double minV = double.PositiveInfinity, maxV = double.NegativeInfinity;
+            foreach (int i in c.Pixels)
+            {
+                double x = i % w - cx, y = i / w - cy;
+                double u = x * cs + y * sn, v = -x * sn + y * cs;
+                minU = Math.Min(minU, u); maxU = Math.Max(maxU, u);
+                minV = Math.Min(minV, v); maxV = Math.Max(maxV, v);
+            }
+            double along = maxU - minU + 1, across = maxV - minV + 1;
+            if (Math.Max(along, across) <= 4 * Math.Min(along, across)) candidates.Add(c);
+        }
+        if (candidates.Count < TextPeerMin + 1) return;
+        candidates.Sort((a, b) => (a.MinX + a.MaxX).CompareTo(b.MinX + b.MaxX));
+        var centresX = candidates.Select(c => (c.MinX + c.MaxX) * 0.5).ToArray();
+        foreach (var c in candidates)
+        {
+            if (c.Centerline || !LocalEligible(c, median)) continue;
+            double cx = (c.MinX + c.MaxX) * 0.5, cy = (c.MinY + c.MaxY) * 0.5;
+            double radius = 4 * c.MaxDim;
+            int lo = Array.BinarySearch(centresX, cx - radius);
+            if (lo < 0) lo = ~lo;
+            while (lo > 0 && centresX[lo - 1] >= cx - radius) lo--;
+            var neighbours = new List<(double X, double Y, double Size)>();
+            bool crowded = false;
+            for (int j = lo; j < candidates.Count && centresX[j] <= cx + radius; j++)
+            {
+                var o = candidates[j];
+                if (o == c || o.MaxDim > 2 * c.MaxDim || c.MaxDim > 2 * o.MaxDim) continue;
+                double dx = centresX[j] - cx, dy = (o.MinY + o.MaxY) * 0.5 - cy;
+                double distance = Math.Sqrt(dx * dx + dy * dy);
+                if (distance < 0.4 * Math.Max(c.MaxDim, o.MaxDim) || distance > radius) continue;
+                // Bound directional hypotheses in dense symbol fields. Ambiguous local
+                // candidates keep their original fill rather than losing source letters.
+                if (neighbours.Count == 64) { crowded = true; break; }
+                neighbours.Add((dx, dy, o.MaxDim));
+            }
+            if (crowded) { c.TextRow = true; continue; }
+            foreach (var axis in neighbours)
+            {
+                double len = Math.Sqrt(axis.X * axis.X + axis.Y * axis.Y);
+                double ux = axis.X / len, uy = axis.Y / len;
+                int peers = 0;
+                foreach (var o in neighbours)
+                {
+                    double cross = Math.Abs(o.X * uy - o.Y * ux);
+                    if (cross > 0.25 * Math.Min(c.MaxDim, o.Size)) continue;
+                    if (++peers < TextPeerMin) continue;
+                    c.TextRow = true;
+                    break;
+                }
+                if (c.TextRow) break;
+            }
+        }
+    }
+
     static void ExtractLocal(Comp c, int[] comp, bool[] skel, double[] widthAt, int[] dtSq, bool[] inkMask,
         int ink, double median, int pruneLen, int growLen,
         EffectiveParams p, int w, int h, List<StrokePath> strokes)
