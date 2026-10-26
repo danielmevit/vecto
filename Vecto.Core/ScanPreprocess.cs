@@ -30,11 +30,10 @@ public static class ScanPreprocess
     /// Absolute ink floor (VEC-89). Inside a solid black mark wider than the window every
     /// local window is uniformly dark, so Sauvola's T = m·(1 + k·(δ/R − 1)) collapses to ~0
     /// and "0 &lt; 0" turns the mark's interior into paper. A pixel below this luminance is
-    /// ink regardless of its local statistics. The floor only binds where Sauvola's own
-    /// threshold drops under it — near-uniform dark windows; any window that still contains
-    /// paper keeps a threshold far above it, so halos, faint strokes and dark paper are
-    /// untouched. Deliberately low: it preserves opaque black ink (with scan noise), not
-    /// dark-gray fills.
+    /// ink regardless of the local Sauvola threshold. After alpha-to-paper normalization,
+    /// opaque luminance <= 30 is therefore ink. A window containing paper can still have
+    /// a threshold below 31. This does not guarantee preservation of noisy black above 30
+    /// or arbitrary gray fills, and very dark backgrounds may change.
     /// </summary>
     public const double SolidInkFloor = 31.0;
 

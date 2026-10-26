@@ -56,7 +56,8 @@ LIMITATIONS = """# Limitations of the CAD reference evaluator v2
   are rejected. Generic explicit nominal transforms are declarations only.
 * Text and solid zones are excluded from stroke precision; glyph legibility is
   not judged by this tool.
-* Tolerances are the frozen VEC-79 bases; v2 adds explicit coverage fractions.
+* Tolerances are the frozen VEC-79 bases; v2 adds explicit coverage fractions; v3 records the existing straightness cap
+  and requires 90% coverage for arcs with absolute sweep <=4 degrees.
   They were not tuned on the archive results.
 """
 
@@ -76,7 +77,7 @@ def load(path):
 
 def dump(path, obj):
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
-        json.dump(obj, fh, indent=2, ensure_ascii=False)
+        json.dump(obj, fh, indent=2, ensure_ascii=False, allow_nan=False)
         fh.write("\n")
 
 

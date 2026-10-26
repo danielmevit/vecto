@@ -25,7 +25,7 @@ writes into `--out` (keep it under the ignored `_bench/`):
 | `cases/<case>.json` | per-entity results (lines, circles, arcs, connections, merges, unsupported strokes, image) |
 | `summary.json` | all metrics per case |
 | `manifest.json` | archive and evaluator file hashes, `tracer_invoked: false` |
-| `tolerances.json` | versioned tolerances (`vecto.cad-ref.tolerances/2`) |
+| `tolerances.json` | versioned tolerances (`vecto.cad-ref.tolerances/3`) |
 | `LIMITATIONS.md` | what is not scored / not claimed |
 | `original-grader-counterexamples.json` | each control replayed through the original grader |
 | `review.html` + `assets/` | standalone page with the actual input raster and the archive's own rasterizer outputs for B300 clean, C300 clean, A600 clean, plus a table of all 18 cases |
@@ -94,3 +94,20 @@ closed. Without renderer metadata, the exact generic declaration
 `px = mm * dpi / 25.4` means precisely nominal scale and zero offset; its receipt
 explicitly says the renderer is unverified. No arbitrary future renderer claim
 is implied. Matching tolerances and geometry algorithms are unchanged.
+
+## Tolerance revision 3
+
+The existing two-anchor straightness test is unchanged: both cubic control
+points must be within `min(0.02 mm, endpoint_tolerance_mm / 10)` of the finite
+anchor chord. Revision 3 records the cap and divisor explicitly; it does not
+admit slightly curved paths as two-anchor lines.
+
+Arc completeness requires an actual recovered stroke. For absolute sweeps
+<=4 degrees, at least 90% of signed-sweep samples must be covered; larger sweeps
+retain `1 - 4 / abs(sweep_deg)`. Zero, nonfinite and >360-degree sweeps are
+rejected. Missing nearby recovered chords give `null` deviation, never an
+invented finite error or successful match. Result JSON rejects NaN/Infinity.
+Distance-based coverage still cannot distinguish a sufficiently close small-arc
+chord from a curve; curvature/arc length, duplicate arc ownership, arc merges and
+text roles remain unscored, alongside the limitations above. No matching or
+export-policy redesign is implied.

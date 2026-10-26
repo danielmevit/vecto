@@ -39,9 +39,9 @@ from .geometry import (ang_diff, angle_deg, arc_samples, chords_of, circle_fit, 
                        sample_segments, seg_is_finite_line)
 from .registration import Registration
 
-TOLERANCES_VERSION = "vecto.cad-ref.tolerances/2"
-# Numeric bases are UNCHANGED from the frozen VEC-79 tolerances; v2 only adds
-# the coverage / support fractions that the original left implicit.
+TOLERANCES_VERSION = "vecto.cad-ref.tolerances/3"
+# Numeric bases remain frozen; v3 records the existing straightness cap and
+# requires meaningful coverage for sweeps within the angular allowance.
 TOLERANCES = {
     "version": TOLERANCES_VERSION,
     "endpoint_mm": {"base": 0.45, "per_mm_per_px": 1.0},
@@ -52,6 +52,8 @@ TOLERANCES = {
     "circle_radius_mm": {"base": 0.45, "per_mm_per_px": 1.0},
     "junction_mm": {"base": 0.60, "per_mm_per_px": 1.0},
     "arc_cover_deg": 4.0,
+    "small_arc_coverage": 0.9,
+    "two_anchor_straightness_mm": {"cap": 0.02, "endpoint_divisor": 10.0},
     "circle_cover_deg": 4.0,
     "presence_coverage": 0.9,
     "partial_coverage": 0.5,
@@ -122,6 +124,8 @@ def _arc(aid, source, role, width, center, r, s):
         sweep, inferred = float(s["sweep_deg"]), False
     else:
         sweep, inferred = (s["end_deg"] - s["start_deg"]) % 360.0 or 360.0, True
+    if not math.isfinite(sweep) or not 0 < abs(sweep) <= 360:
+        raise ValueError(f"arc {aid}: sweep must be finite, nonzero and at most 360 degrees")
     return {"id": aid, "source": source, "role": role, "width_mm": width, "center": tuple(center),
             "r_mm": r, "start_deg": float(s["start_deg"]), "sweep_deg": sweep, "sweep_inferred": inferred}
 
@@ -223,7 +227,8 @@ def score_case(truth, geo, case, reg=None, dxf_text=None, input_png=None, recove
     # ---- straight lines ----------------------------------------------------
     two = []  # single-segment finite straight strokes
     for s in strokes:
-        if s["seg_count"] == 1 and seg_is_finite_line(s["segments"][0], min(0.02, ep / 10)):
+        if s["seg_count"] == 1 and seg_is_finite_line(s["segments"][0], min(TOLERANCES["two_anchor_straightness_mm"]["cap"],
+                                                                       ep / TOLERANCES["two_anchor_straightness_mm"]["endpoint_divisor"])):
             two.append(s)
     cands = []
     for ti, tl in enumerate(t_lines):
@@ -370,15 +375,15 @@ def score_case(truth, geo, case, reg=None, dxf_text=None, input_png=None, recove
             cov = coverage(smp, [(s["bbox"], s["chords"])], T["circle_radius"], bb)
             if cov > best[0]:
                 best = (cov, s)
-        need = max(0.0, 1 - ac / span) if span else 1.0
+        need = TOLERANCES["small_arc_coverage"] if span <= ac else 1 - ac / span
         union = coverage(smp, sets, T["circle_radius"], bb)
-        worst = max(point_chords_distance(p, [c for st in strokes if _overlap(st["bbox"], bb) for c in st["chords"]])
-                    for p in smp) if strokes else float("inf")
+        nearby_chords = [c for st in strokes if _overlap(st["bbox"], bb) for c in st["chords"]]
+        worst = max(point_chords_distance(p, nearby_chords) for p in smp) if nearby_chords else None
         row = {"id": ta["id"], "role": ta["role"], "center": list(ta["center"]), "r_mm": ta["r_mm"],
                "start_deg": ta["start_deg"], "sweep_deg": ta["sweep_deg"], "sweep_inferred": ta["sweep_inferred"],
                "best_stroke_sweep_coverage": round(best[0], 4), "union_sweep_coverage": round(union, 4),
-               "required_coverage": round(need, 4), "complete": best[0] >= need,
-               "max_deviation_from_truth_arc_mm": round(worst, 4)}
+               "required_coverage": round(need, 4), "complete": best[1] is not None and best[0] >= need,
+               "max_deviation_from_truth_arc_mm": round(worst, 4) if worst is not None else None}
         if best[1] is not None:
             row["best_stroke_index"] = best[1]["index"]
             row["best_stroke_opposite_side_coverage"] = round(
