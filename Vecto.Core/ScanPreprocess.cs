@@ -26,6 +26,18 @@ public static class ScanPreprocess
     /// <summary>Sauvola's R: normalizes the local standard deviation against the 8-bit range.</summary>
     public const double SauvolaR = 128.0;
 
+    /// <summary>
+    /// Absolute ink floor (VEC-89). Inside a solid black mark wider than the window every
+    /// local window is uniformly dark, so Sauvola's T = m·(1 + k·(δ/R − 1)) collapses to ~0
+    /// and "0 &lt; 0" turns the mark's interior into paper. A pixel below this luminance is
+    /// ink regardless of its local statistics. The floor only binds where Sauvola's own
+    /// threshold drops under it — near-uniform dark windows; any window that still contains
+    /// paper keeps a threshold far above it, so halos, faint strokes and dark paper are
+    /// untouched. Deliberately low: it preserves opaque black ink (with scan noise), not
+    /// dark-gray fills.
+    /// </summary>
+    public const double SolidInkFloor = 31.0;
+
     static readonly Rgba32 Ink = new(0, 0, 0, 255);
     static readonly Rgba32 Paper = new(255, 255, 255, 255);
 
@@ -105,7 +117,9 @@ public static class ScanPreprocess
                 double mean = (double)s / n;
                 double variance = Math.Max(0, (double)sq / n - mean * mean);
                 double dev = Math.Sqrt(variance);
-                double t = mean * (1 + SauvolaK * (dev / SauvolaR - 1));
+                // clamp from below: a solid mark's interior windows are uniformly dark, so the
+                // Sauvola threshold degenerates below any real ink value (VEC-89)
+                double t = Math.Max(mean * (1 + SauvolaK * (dev / SauvolaR - 1)), SolidInkFloor);
                 ink[y * w + x] = lum[y * w + x] < t;
             }
         });
