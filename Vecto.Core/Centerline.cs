@@ -187,18 +187,22 @@ public static partial class Centerline
                     labels[i] = paper;
         // VEC95: mixed-width components (a solid attached to thin linework) give up only the
         // ink their supported local runs actually stroke; solids and the rest stay filled
+        var local = new HashSet<int>();
         foreach (var c in comps)
             if (!c.Centerline && LocalEligible(c, median))
             {
                 ct.ThrowIfCancellationRequested();
-                ExtractLocal(c, comp, skel, widthAt, dtSq, inkMask, labels, paper, ink, median, pruneLen, growLen, p, w, h, strokes);
+                local.Add(c.Id);
+                ExtractLocal(c, comp, skel, widthAt, dtSq, inkMask, ink, median, pruneLen, growLen, p, w, h, strokes);
             }
         // stage 3 junction pass: weld collinear pieces split by junctions or scan gaps,
         // then land every line endpoint that ends against another line on the exact
         // intersection — the strokes a CAD user sees cross and meet cleanly
         MergeCollinearAcrossJunctions(strokes);
+        SeparateLocalPrimitives(strokes, local, comp, widthAt, w, h);
         RationalizeLineAngles(strokes);
         SnapEndsToIntersections(strokes);
+        ReleaseLocalInk(strokes, local, comp, labels, paper, w, h);
         return strokes;
     }
 

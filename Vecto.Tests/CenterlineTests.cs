@@ -294,6 +294,134 @@ public class CenterlineTests
         Assert.Equal(2, doc.Palette.Count);
     }
 
+    // Mixed-width source ownership and editable primitives (VEC97). These use the public
+    // tracer and renderer: a plausible skeleton alone is not a successful recovery.
+    static void AssertInkRetained(RasterImage source, VectorDocument doc, int tolerance)
+    {
+        var render = Rasterizer.Render(doc);
+        for (int y = 0; y < source.Height; y++)
+            for (int x = 0; x < source.Width; x++)
+            {
+                if (source.GetPixel(x, y).R > 128) continue;
+                bool covered = false;
+                for (int dy = -tolerance; dy <= tolerance && !covered; dy++)
+                    for (int dx = -tolerance; dx <= tolerance; dx++)
+                    {
+                        int xx = x + dx, yy = y + dy;
+                        if ((uint)xx >= (uint)source.Width || (uint)yy >= (uint)source.Height) continue;
+                        var c = render.GetPixel(xx, yy);
+                        if (c.A > 128 && c.R < 128) { covered = true; break; }
+                    }
+                Assert.True(covered, $"uncovered source ink at {x},{y}");
+            }
+    }
+
+    static StrokePath AssertPrimitive(VectorDocument doc, Vec2 a, Vec2 b, double width, double endpointTolerance)
+    {
+        var matches = doc.Strokes.Where(s => !s.Closed && s.Segments.Count == 1 &&
+            s.Segments[0].IsLine(0.02) && Math.Abs(s.Width - width) <= Math.Max(0.75, width * 0.15) &&
+            Math.Min(Math.Max(s.Segments[0].P0.DistSq(a), s.Segments[0].P3.DistSq(b)),
+                Math.Max(s.Segments[0].P0.DistSq(b), s.Segments[0].P3.DistSq(a))) <= endpointTolerance * endpointTolerance).ToList();
+        Assert.True(matches.Count == 1, $"expected one editable line {a} to {b}, width {width}; found {matches.Count}");
+        return matches[0];
+    }
+
+    [Theory]
+    [InlineData(3, 1)]
+    [InlineData(5, 1)]
+    [InlineData(7, 1)]
+    [InlineData(3, 2)]
+    [InlineData(5, 2)]
+    public void MixedSolidLongLine_EditableRunAndSolidInkSurvive(int width, int scale)
+    {
+        var img = Make(380 * scale, 180 * scale, (x, y) =>
+            (x >= 20 * scale && x < 80 * scale && y >= 50 * scale && y < 110 * scale) ||
+            (x >= 70 * scale && x < 340 * scale && y >= 78 * scale && y < (78 + width) * scale));
+        var doc = TraceLineArt(img);
+        AssertPrimitive(doc, new Vec2(80 * scale, (78 + width / 2.0) * scale),
+            new Vec2(339.5 * scale, (78 + width / 2.0) * scale), width * scale, 2 * width * scale);
+        AssertInkRetained(img, doc, 2 * scale);
+        var fillOnly = new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette,
+            Regions = doc.Regions, Strokes = [] };
+        var fill = Rasterizer.Render(fillOnly);
+        for (int y = 60 * scale; y < 100 * scale; y++)
+            for (int x = 30 * scale; x < 70 * scale; x++)
+                Assert.True(fill.GetPixel(x, y).R < 128, "solid must remain filled, independently of strokes");
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void MixedTwoWidthOutline_LongCornerRunsAreSeparateEditableLines(int scale)
+    {
+        var img = Make(380 * scale, 250 * scale, (x, y) =>
+        {
+            double xx = (x + 0.5) / scale, yy = (y + 0.5) / scale;
+            return (xx >= 20 && xx <= 80 && yy >= 100 && yy <= 150) ||
+                (xx >= 50 && xx <= 330 && Math.Abs(yy - 40.5) < 2.5) ||
+                (xx >= 50 && xx <= 330 && Math.Abs(yy - 200.5) < 1.5) ||
+                (Math.Abs(xx - 50.5) < 2.5 && yy >= 40 && yy <= 200) ||
+                (Math.Abs(xx - 330.5) < 2.5 && yy >= 40 && yy <= 200);
+        });
+        var doc = TraceLineArt(img);
+        AssertPrimitive(doc, new Vec2(50 * scale, 40 * scale), new Vec2(330 * scale, 40 * scale), 5 * scale, 8 * scale);
+        AssertPrimitive(doc, new Vec2(330 * scale, 40 * scale), new Vec2(330 * scale, 200 * scale), 5 * scale, 8 * scale);
+        AssertPrimitive(doc, new Vec2(50 * scale, 200 * scale), new Vec2(330 * scale, 200 * scale), 3 * scale, 8 * scale);
+        AssertInkRetained(img, doc, 2 * scale);
+    }
+
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    [InlineData(false, 2)]
+    [InlineData(true, 2)]
+    public void MixedSolidJunction_MainRunsRemainContinuous(bool cross, int scale)
+    {
+        var img = Make(380 * scale, 240 * scale, (x, y) =>
+        {
+            double xx = (x + 0.5) / scale, yy = (y + 0.5) / scale;
+            return (xx >= 20 && xx <= 70 && yy >= 95 && yy <= 145) ||
+                (xx >= 60 && xx <= 340 && Math.Abs(yy - 120.5) < 1.5) ||
+                (Math.Abs(xx - 200.5) < 1.5 && yy >= 40 && yy <= (cross ? 200 : 120));
+        });
+        var doc = TraceLineArt(img);
+        var horizontal = AssertPrimitive(doc, new Vec2(70 * scale, 120 * scale), new Vec2(340 * scale, 120 * scale),
+            3 * scale, 6 * scale);
+        var vertical = AssertPrimitive(doc, new Vec2(200 * scale, 40 * scale), new Vec2(200 * scale, (cross ? 200 : 120) * scale),
+            3 * scale, 6 * scale);
+        var hs = horizontal.Segments[0];
+        var vs = vertical.Segments[0];
+        Assert.True(Math.Abs(hs.P0.Y - 120 * scale) < scale && Math.Abs(vs.P0.X - 200 * scale) < scale);
+        AssertInkRetained(img, doc, 2 * scale);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void LocalRecovery_SeparateRingStaysClosed_TextAndSolidStayFilled(int scale)
+    {
+        var img = Make(480 * scale, 260 * scale, (x, y) =>
+        {
+            double xx = (x + 0.5) / scale, yy = (y + 0.5) / scale;
+            double radius = Math.Sqrt((xx - 410) * (xx - 410) + (yy - 90) * (yy - 90));
+            bool glyph = Enumerable.Range(0, 5).Any(i => xx >= 110 + 20 * i && xx < 113 + 20 * i && yy >= 210 && yy < 230);
+            return glyph || radius is >= 22.5 and <= 25.5 ||
+                (xx >= 20 && xx < 80 && yy >= 50 && yy < 110) ||
+                (xx >= 70 && xx < 340 && yy >= 78 && yy < 81);
+        });
+        var doc = TraceLineArt(img);
+        AssertPrimitive(doc, new Vec2(80 * scale, 79.5 * scale), new Vec2(339.5 * scale, 79.5 * scale), 3 * scale, 6 * scale);
+        var ring = Assert.Single(doc.Strokes, s => s.Closed);
+        Assert.InRange(PathLength(ring), 2 * Math.PI * 24 * scale - 6 * scale, 2 * Math.PI * 24 * scale + 6 * scale);
+        Assert.DoesNotContain(doc.Strokes, s => s.Segments.Any(g => g.P0.Y > 200 * scale));
+        var fillOnly = new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette,
+            Regions = doc.Regions, Strokes = [] };
+        var fill = Rasterizer.Render(fillOnly);
+        for (int i = 0; i < 5; i++) Assert.True(fill.GetPixel((111 + 20 * i) * scale, 220 * scale).R < 128);
+        Assert.True(fill.GetPixel(50 * scale, 80 * scale).R < 128);
+        AssertInkRetained(img, doc, 2 * scale);
+    }
+
     // ---- VEC-52 stage 3: CAD regularization ----
 
     [Fact]
