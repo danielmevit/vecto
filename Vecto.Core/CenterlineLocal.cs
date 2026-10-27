@@ -30,6 +30,7 @@ public static partial class Centerline
     static void MarkOrientedLocalTextRows(List<Comp> comps, double median, double[] widthAt, int w)
     {
         var candidates = new List<Comp>();
+        var shapes = new Dictionary<Comp, (double Along, double Across, double X, double Y, double Width)>();
         foreach (var c in comps)
         {
             // The component's own width prevents a long drawing hairline from setting
@@ -61,8 +62,13 @@ public static partial class Centerline
                 minV = Math.Min(minV, v); maxV = Math.Max(maxV, v);
             }
             double along = maxU - minU + 1, across = maxV - minV + 1;
-            if (Math.Max(along, across) <= 4 * Math.Min(along, across)) candidates.Add(c);
+            if (Math.Max(along, across) <= 4 * Math.Min(along, across))
+            {
+                candidates.Add(c);
+                shapes[c] = (along, across, cs, sn, Median(widths));
+            }
         }
+        MarkShortLocalText(candidates, shapes, median, w);
         if (candidates.Count < TextPeerMin + 1) return;
         candidates.Sort((a, b) => (a.MinX + a.MaxX).CompareTo(b.MinX + b.MaxX));
         var centresX = candidates.Select(c => (c.MinX + c.MaxX) * 0.5).ToArray();
@@ -105,6 +111,89 @@ public static partial class Centerline
                 if (c.TextRow) break;
             }
         }
+    }
+
+    // A compact component with multiple substantial counters supplies its own text
+    // evidence: a one-character label has no row peers. Use the typical ridge width,
+    // not a solid boss's maximum DT, to exclude connected structural outlines. This
+    // only vetoes NEW local recovery; original whole-component decisions are unchanged.
+    static void MarkShortLocalText(List<Comp> candidates,
+        Dictionary<Comp, (double Along, double Across, double X, double Y, double Width)> shapes,
+        double median, int w)
+    {
+        var anchors = new List<Comp>();
+        foreach (var c in candidates)
+        {
+            var s = shapes[c];
+            if (Math.Max(s.Along, s.Across) > TextMaxFactor * (s.Width + ThinSlack)) continue;
+            if (!HasMultipleCounters(c, s.Width, w)) continue;
+            anchors.Add(c);
+            if (!c.Centerline && LocalEligible(c, median)) c.TextRow = true;
+        }
+        // One-hop context preserves adjacent open forms without inventing an OCR
+        // decision for every compact shape. Never use newly protected neighbours as
+        // anchors, and never veto the annuli excluded before this pass.
+        anchors.Sort((a, b) => a.MinX.CompareTo(b.MinX));
+        var lefts = anchors.Select(c => c.MinX).ToArray();
+        foreach (var c in candidates)
+        {
+            if (c.Centerline || !LocalEligible(c, median)) continue;
+            var s = shapes[c];
+            if (Math.Max(s.Along, s.Across) > TextMaxFactor * (s.Width + ThinSlack)) continue;
+            int lo = Array.BinarySearch(lefts, c.MinX - 4 * c.MaxDim);
+            if (lo < 0) lo = ~lo;
+            for (int j = lo; j < anchors.Count && anchors[j].MinX <= c.MaxX + 4 * c.MaxDim; j++)
+            {
+                var a = anchors[j];
+                var t = shapes[a];
+                if (c.MaxDim > 2 * a.MaxDim || a.MaxDim > 2 * c.MaxDim ||
+                    s.Width > 2 * t.Width || t.Width > 2 * s.Width) continue;
+                if (Math.Abs(s.X * t.X + s.Y * t.Y) < 0.866) continue;
+                double dx = (c.MinX + c.MaxX - a.MinX - a.MaxX) * 0.5;
+                double dy = (c.MinY + c.MaxY - a.MinY - a.MaxY) * 0.5;
+                double along = Math.Abs(dx * t.X + dy * t.Y);
+                double across = Math.Abs(-dx * t.Y + dy * t.X);
+                if (along > 0.35 * Math.Min(c.MaxDim, a.MaxDim) ||
+                    across < 0.5 * (s.Across + t.Across) ||
+                    across > 1.5 * Math.Max(c.MaxDim, a.MaxDim)) continue;
+                c.TextRow = true;
+                break;
+            }
+        }
+    }
+
+    // Four-connected ink uses eight-connected paper, so diagonal raster pinholes
+    // are not invented counters. Ignore cavities smaller than a stroke-width square.
+    static bool HasMultipleCounters(Comp c, double width, int w)
+    {
+        int bw = c.MaxX - c.MinX + 3, bh = c.MaxY - c.MinY + 3;
+        var seen = new bool[bw * bh];
+        foreach (int q in c.Pixels) seen[(q / w - c.MinY + 1) * bw + q % w - c.MinX + 1] = true;
+        var queue = new int[seen.Length];
+        int counters = 0;
+        for (int start = 0; start < seen.Length; start++)
+        {
+            if (seen[start]) continue;
+            int head = 0, tail = 0;
+            bool exterior = false;
+            seen[start] = true;
+            queue[tail++] = start;
+            while (head < tail)
+            {
+                int q = queue[head++], x = q % bw, y = q / bw;
+                if (x == 0 || y == 0 || x == bw - 1 || y == bh - 1) exterior = true;
+                for (int yy = Math.Max(0, y - 1); yy <= Math.Min(bh - 1, y + 1); yy++)
+                    for (int xx = Math.Max(0, x - 1); xx <= Math.Min(bw - 1, x + 1); xx++)
+                    {
+                        int n = yy * bw + xx;
+                        if (seen[n]) continue;
+                        seen[n] = true;
+                        queue[tail++] = n;
+                    }
+            }
+            if (!exterior && tail >= width * width && ++counters >= 2) return true;
+        }
+        return false;
     }
 
     // Uniform radial ink in a near-square box is positive circular CAD evidence,

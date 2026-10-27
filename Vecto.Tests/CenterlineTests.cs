@@ -501,6 +501,89 @@ public class CenterlineTests
         }
     }
 
+    [Theory]
+    [InlineData(1, 0, 1)]
+    [InlineData(2, 0, 1)]
+    [InlineData(3, 0, 1)]
+    [InlineData(4, 0, 1)]
+    [InlineData(1, 37, 1)]
+    [InlineData(2, 43.6, 1)]
+    [InlineData(3, 30, 1)]
+    [InlineData(4, 90, 1)]
+    [InlineData(1, 43.6, 2)]
+    [InlineData(4, 37, 2)]
+    public void ShortMulticounterLabels_KeepFilledInkAndCounters(int count, double degrees, int scale)
+    {
+        var (img, cs, sn) = ShortLabel(count, degrees, scale, false);
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes);
+        Assert.All(doc.Strokes, s => Assert.All(s.Segments, g =>
+            Assert.True(g.P0.Y < 30 * scale && g.P3.Y < 30 * scale)));
+        Assert.Equal(3 * count + 1, doc.Regions.Count);
+        AssertShortLabelFill(img, doc, count, cs, sn, scale);
+    }
+
+    [Theory]
+    [InlineData(2, 0)]
+    [InlineData(3, 37)]
+    [InlineData(4, 90)]
+    public void ShortClosedOpenMixtures_UseNearbyCounterEvidence(int count, double degrees)
+    {
+        var (img, cs, sn) = ShortLabel(count, degrees, 1, true);
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes);
+        AssertShortLabelFill(img, doc, count, cs, sn, 1);
+    }
+
+    static (RasterImage Image, double Cos, double Sin) ShortLabel(int count, double degrees, int scale, bool mixed)
+    {
+        double angle = degrees * Math.PI / 180, cs = Math.Cos(angle), sn = Math.Sin(angle);
+        var img = Make(1000 * scale, 500 * scale, (x, y) =>
+        {
+            double xx = (x + 0.5) / scale, yy = (y + 0.5) / scale;
+            if (xx >= 10 && xx < 990 && yy >= 15 && yy < 16) return true;
+            double u = (xx - 350.35) * cs + (yy - 200.65) * sn;
+            double v = -(xx - 350.35) * sn + (yy - 200.65) * cs;
+            if (u < 0 || u >= 30 * (count - 1) + 14 || v < 0 || v >= 40) return false;
+            int glyph = (int)(u / 30);
+            double gx = u % 30;
+            // Alternating closed B/8 and open E shapes; all share the same source
+            // stroke scale. No glyph count or source coordinates reach the classifier.
+            return gx < 14 && (gx < 2 || ((!mixed || glyph % 2 == 0) && gx >= 12) ||
+                v < 2 || v >= 38 || v is >= 19 and < 22);
+        });
+        return (img, cs, sn);
+    }
+
+    static void AssertShortLabelFill(RasterImage source, VectorDocument doc, int count, double cs, double sn, int scale)
+    {
+        var fillDoc = new VectorDocument { Width = doc.Width, Height = doc.Height,
+            Palette = doc.Palette, Regions = doc.Regions, Strokes = [] };
+        var fill = Rasterizer.Render(fillDoc);
+        for (int i = 0; i < count; i++)
+            foreach (var (v, black) in new[] { (20.5, true), (10.0, false), (30.0, false) })
+            {
+                double u = 30 * i + 7;
+                int x = (int)((350.35 + u * cs - v * sn) * scale);
+                int y = (int)((200.65 + u * sn + v * cs) * scale);
+                Assert.Equal(black, fill.GetPixel(x, y).R < 128);
+            }
+        AssertInkRetained(source, doc, scale);
+    }
+
+    [Fact]
+    public void CompactSingleCavityOutline_IsNotAutomaticallyText()
+    {
+        var img = Make(1000, 180, (x, y) =>
+            (x >= 10 && x < 990 && y == 15) ||
+            (x >= 60 && x < 100 && y >= 60 && y < 90 &&
+                (x < 62 || x >= 98 || y < 62 || y >= 88)) ||
+            (x >= 60 && x < 64 && y >= 60 && y < 64));
+        var doc = TraceLineArt(img);
+        Assert.Contains(doc.Strokes, s => s.Segments.Any(g => g.P0.Y > 50 && (g.P3 - g.P0).Length > 20));
+        AssertInkRetained(img, doc, 1);
+    }
+
     [Fact]
     public void MixedScaleLongOpenParallelLines_StillReachLocalExtraction()
     {
