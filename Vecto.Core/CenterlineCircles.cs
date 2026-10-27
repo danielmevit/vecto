@@ -224,8 +224,10 @@ internal static class CenterlineCircles
             var direction = new Vec2(DetMath.Cos(angle), DetMath.Sin(angle));
             // All angles must have source ink at the proposed centre and both quarter
             // widths. No majority vote, gap filling, or boundary-only ring is sufficient.
+            // A one-pixel raster tolerance covers pixel-grid quantization of a thin ring:
+            // the ideal sample can land on a paper corner beside supported source ink.
             for (int band = -1; band <= 1; band++)
-                if (At(center + direction * (radius + band * width * 0.25)) != sourceId)
+                if (!SupportedNear(center + direction * (radius + band * width * 0.25)))
                     return null;
         }
         return new Proposal(sourceId, seed, center, radius, width,
@@ -238,6 +240,22 @@ internal static class CenterlineCircles
             if (p.X < 0 || p.Y < 0 || p.X >= w || p.Y >= h) return -2;
             int index = (int)p.Y * w + (int)p.X;
             return !ink[index] ? -1 : ids[index] < 0 ? -2 : ids[index];
+        }
+
+        // Same source component within the sample cell or one of its eight neighbours.
+        // Other components and unknown ink never satisfy support.
+        bool SupportedNear(Vec2 p)
+        {
+            int x = (int)p.X, y = (int)p.Y;
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    int qx = x + dx, qy = y + dy;
+                    if (qx < 0 || qy < 0 || qx >= w || qy >= h) continue;
+                    int index = qy * w + qx;
+                    if (ink[index] && ids[index] == sourceId) return true;
+                }
+            return false;
         }
     }
 }

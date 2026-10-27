@@ -53,8 +53,10 @@ public class CenterlineCircleProposalTests
     public void BroadAttachedSolidDoesNotInflateRingWidth()
     {
         var center = new Vec2(90.2, 90.4);
+        // The solid starts one pixel outside the inner paper cavity (centre + 37.8 px)
+        // and inside the ring's outer skin, so it attaches without cutting the cavity.
         var (ink, ids) = Source(210, 190, p => Ring(p, center, 40, 6) ||
-            (p.X >= 124 && p.X < 195 && p.Y >= 53 && p.Y < 128));
+            (p.X >= 128 && p.X < 195 && p.Y >= 53 && p.Y < 128));
         var proposal = Assert.Single(CenterlineCircles.Propose(ink, ids, AllIds(ids), 210, 190));
         AssertCircle(proposal, center, 40, 6);
         Assert.True(proposal.Evidence.ConsistentWidthSamples < proposal.Evidence.CircumferenceSamples);
