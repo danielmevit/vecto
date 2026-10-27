@@ -517,8 +517,10 @@ public class CenterlineTests
         AssertInkRetained(img, doc, 1);
     }
 
-    [Fact]
-    public void VerticalCadCircleRowWithDrawingLine_KeepsFiveClosedStrokes()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CadCircleRowWithDrawingLine_KeepsFiveClosedStrokes(bool vertical)
     {
         var img = Make(5000, 1000, (x, y) =>
         {
@@ -526,7 +528,8 @@ public class CenterlineTests
             if (xx >= 10 && xx < 4990 && yy >= 15 && yy < 20) return true;
             return Enumerable.Range(0, 5).Any(i =>
             {
-                double dx = xx - 200, dy = yy - (150 + 170 * i);
+                double dx = xx - (vertical ? 200 : 220 + 170 * i);
+                double dy = yy - (vertical ? 150 + 170 * i : 170);
                 double r = Math.Sqrt(dx * dx + dy * dy);
                 return r is >= 60.5 and < 69.5;
             });

@@ -38,26 +38,17 @@ public static partial class Centerline
             var widths = new List<double>();
             double cx = (c.MinX + c.MaxX) * 0.5, cy = (c.MinY + c.MaxY) * 0.5;
             double xx = 0, xy = 0, yy = 0;
-            double minRadiusSq = double.PositiveInfinity, maxRadiusSq = 0;
             foreach (int i in c.Pixels)
             {
                 if (widthAt[i] > 0) widths.Add(widthAt[i]);
                 double x = i % w - cx, y = i / w - cy;
                 xx += x * x; xy += x * y; yy += y * y;
-                double r2 = x * x + y * y;
-                minRadiusSq = Math.Min(minRadiusSq, r2); maxRadiusSq = Math.Max(maxRadiusSq, r2);
             }
             // Diagonal ridges can underestimate the own median (stair-step widths).
             // The component EDT maximum is a conservative fallback, still gated by
             // intrinsic compactness and a consistent four-peer row.
             if (widths.Count == 0 || c.MaxDim > TextMaxFactor * Math.Max(Median(widths), c.Width)) continue;
-            // A uniform thin circular annulus is positive CAD geometry evidence, even
-            // in a repeated row. Closure alone supplies neither this exception nor text
-            // evidence. Round O-like letters remain an unavoidable ambiguous family.
-            double inner = Math.Sqrt(minRadiusSq), outer = Math.Sqrt(maxRadiusSq);
-            int boxWidth = c.MaxX - c.MinX + 1, boxHeight = c.MaxY - c.MinY + 1;
-            bool roundBox = Math.Max(boxWidth, boxHeight) <= 1.1 * Math.Min(boxWidth, boxHeight);
-            if (roundBox && inner > 0 && outer - inner <= 0.25 * (outer + inner) * 0.5) continue;
+            if (IsThinAnnulus(c, w)) continue;
             double angle = 0.5 * Math.Atan2(2 * xy, xx - yy);
             double cs = Math.Cos(angle), sn = Math.Sin(angle);
             double minU = double.PositiveInfinity, maxU = double.NegativeInfinity;
@@ -114,6 +105,23 @@ public static partial class Centerline
                 if (c.TextRow) break;
             }
         }
+    }
+
+    // Uniform radial ink in a near-square box is positive circular CAD evidence,
+    // unlike closure alone. O/C-like letters remain an ambiguous geometry family.
+    static bool IsThinAnnulus(Comp c, int w)
+    {
+        int boxWidth = c.MaxX - c.MinX + 1, boxHeight = c.MaxY - c.MinY + 1;
+        if (Math.Max(boxWidth, boxHeight) > 1.1 * Math.Min(boxWidth, boxHeight)) return false;
+        double cx = (c.MinX + c.MaxX) * 0.5, cy = (c.MinY + c.MaxY) * 0.5;
+        double minRadiusSq = double.PositiveInfinity, maxRadiusSq = 0;
+        foreach (int i in c.Pixels)
+        {
+            double x = i % w - cx, y = i / w - cy, r2 = x * x + y * y;
+            minRadiusSq = Math.Min(minRadiusSq, r2); maxRadiusSq = Math.Max(maxRadiusSq, r2);
+        }
+        double inner = Math.Sqrt(minRadiusSq), outer = Math.Sqrt(maxRadiusSq);
+        return inner > 0 && outer - inner <= 0.25 * (outer + inner) * 0.5;
     }
 
     static void ExtractLocal(Comp c, int[] comp, bool[] skel, double[] widthAt, int[] dtSq, bool[] inkMask,

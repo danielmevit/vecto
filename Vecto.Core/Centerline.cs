@@ -139,7 +139,7 @@ public static partial class Centerline
             c.MaxDim = Math.Max(c.MaxX - c.MinX + 1, c.MaxY - c.MinY + 1);
             c.Centerline = c.Width <= ThinFactor * median + ThinSlack && c.MaxDim >= LongFactor * median;
         }
-        MarkTextRows(comps, median, widthAt);
+        MarkTextRows(comps, median, widthAt, w);
         MarkOrientedLocalTextRows(comps, median, widthAt, w);
 
         int pruneLen = Math.Max(2, (int)Math.Ceiling(2 * median));
@@ -286,11 +286,15 @@ public static partial class Centerline
     /// Compactness excludes long open hatch lines from that additional candidate set;
     /// row context, rather than closure alone, distinguishes glyphs from isolated CAD rings.
     /// </summary>
-    static void MarkTextRows(List<Comp> comps, double median, double[] widthAt)
+    static void MarkTextRows(List<Comp> comps, double median, double[] widthAt, int w)
     {
         bool Candidate(Comp c)
         {
             if (c.Centerline && c.MaxDim <= TextMaxFactor * median) return true;
+            // The added component-scale fallback must not demote a previously valid
+            // CAD circle just because similar circles form a row. Preserve the original
+            // global glyph-scale rule above; this exception is geometry + scale evidence.
+            if (c.MaxDim > TextMaxFactor * median && IsThinAnnulus(c, w)) return false;
             int shortDim = Math.Min(c.MaxX - c.MinX + 1, c.MaxY - c.MinY + 1);
             if (c.MaxDim > 4 * shortDim) return false;
             var widths = c.Pixels.Where(i => widthAt[i] > 0).Select(i => widthAt[i]).ToList();
