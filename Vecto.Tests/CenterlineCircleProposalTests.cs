@@ -62,6 +62,17 @@ public class CenterlineCircleProposalTests
         Assert.True(proposal.Evidence.ConsistentWidthSamples < proposal.Evidence.CircumferenceSamples);
     }
 
+    [Fact]
+    public void BroadSolidThatCutsPaperCavityIsNotPromoted()
+    {
+        var center = new Vec2(90.2, 90.4);
+        // Regression for the corrected fixture above: a solid beginning at x=124 cuts the
+        // inner paper cavity (which reaches about x=127.2), so the cavity is not round.
+        var (ink, ids) = Source(210, 190, p => Ring(p, center, 40, 6) ||
+            (p.X >= 124 && p.X < 195 && p.Y >= 53 && p.Y < 128));
+        Assert.Empty(CenterlineCircles.Propose(ink, ids, AllIds(ids), 210, 190));
+    }
+
     [Theory]
     [InlineData("ellipse")]
     [InlineData("near-ellipse")]
