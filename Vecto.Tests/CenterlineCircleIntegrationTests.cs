@@ -21,9 +21,9 @@ public class CenterlineCircleIntegrationTests
     public void AttachedSolidEmitsOneMeasuredCircleAndKeepsSolidFilled()
     {
         var doc = Trace(p => Ring(p) || Solid(p));
-        var circle = Assert.Single(doc.Strokes.Where(s => s.Closed));
+        var circle = Assert.Single(doc.Strokes, s => s.Closed);
         Assert.Equal(4, circle.Segments.Count);
-        var center = (circle.Segments[0].P0 + circle.Segments[2].P0) / 2;
+        var center = (circle.Segments[0].P0 + circle.Segments[2].P0) * .5;
         Assert.InRange((center - new Vec2(90, 100)).Length, 0, 1.5);
         Assert.InRange(Math.Abs((circle.Segments[0].P0 - center).Length - 40), 0, 1.5);
         Assert.InRange(circle.Width, 5, 7);
@@ -61,7 +61,7 @@ public class CenterlineCircleIntegrationTests
         var a = kind switch { "diameter" => new Vec2(50, 100), "chord" => new Vec2(58, 76), _ => new Vec2(50, 60) };
         var b = kind switch { "diameter" => new Vec2(130, 100), "chord" => new Vec2(122, 76), _ => new Vec2(130, 60) };
         var d = b - a;
-        var stroke = new StrokePath { Width = 3, Segments = [new CubicBezier(a, a + d / 3, a + d * (2.0 / 3), b)] };
+        var stroke = new StrokePath { Width = 3, Segments = [new CubicBezier(a, a + d * (1.0 / 3), a + d * (2.0 / 3), b)] };
         Assert.False(Centerline.OwnedByCircle(stroke, proposal, new int[240 * 200], 240, 200, 6));
         // Pair the containment regression with the public pipeline: the crossing source
         // destroys the empty cavity and must never be replaced by a completed circle.
