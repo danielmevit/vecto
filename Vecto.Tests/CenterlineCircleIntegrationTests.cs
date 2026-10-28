@@ -31,10 +31,10 @@ public class CenterlineCircleIntegrationTests
         // Reuse the established DXF parser and arc reconstruction, on actual public output.
         var dxf = DxfWriter.Write(doc);
         var polylines = Dxf<List<List<(int Code, string Value)>>>("RecordsIn", dxf, "ENTITIES", "POLYLINE");
-        int index = Assert.Single(Enumerable.Range(0, polylines.Count).Where(i =>
+        int index = Assert.Single(Enumerable.Range(0, polylines.Count), i =>
             polylines[i].Any(p => p.Code == 40 && double.Parse(p.Value,
                 System.Globalization.CultureInfo.InvariantCulture) > 0) &&
-            Dxf<double>("Num", polylines[i], 70) == 1));
+            Dxf<double>("Num", polylines[i], 70) == 1);
         Assert.InRange(Math.Abs(Dxf<double>("Num", polylines[index], 40) - circle.Width), 0, .00001);
         Assert.InRange(Math.Abs(Dxf<double>("Num", polylines[index], 41) - circle.Width), 0, .00001);
         var vertices = Dxf<List<(double X, double Y, double B)>>("Vertices", dxf, index);
@@ -62,6 +62,29 @@ public class CenterlineCircleIntegrationTests
         Assert.All(doc.Strokes, stroke => Assert.False(stroke.Closed));
         // Supported whole-component control: five r65/width9 rings plus one long line.
         new CenterlineTests().CadCircleRowWithDrawingLine_KeepsFiveClosedStrokes(false);
+    }
+
+    [Fact]
+    public void AttachedRingKeepsHatchesAndTextInk()
+    {
+        var doc = Trace(p => Ring(p) || Solid(p) ||
+            Enumerable.Range(0, 4).Any(i => p.X >= 210 && p.X < 380 &&
+                p.Y >= 70 + 18 * i && p.Y < 73 + 18 * i) ||
+            Enumerable.Range(0, 5).Any(i => p.X >= 420 + 20 * i && p.X < 423 + 20 * i &&
+                p.Y >= 160 && p.Y < 180), 560, 220);
+        Assert.Single(doc.Strokes, s => s.Closed);
+        for (int i = 0; i < 4; i++)
+        {
+            double y = 71.5 + 18 * i;
+            Assert.Contains(doc.Strokes, s => s.Segments.Any(g =>
+                Math.Abs(g.P0.Y - y) < 2 && Math.Abs(g.P3.Y - y) < 2 &&
+                Math.Min(g.P0.X, g.P3.X) < 250 && Math.Max(g.P0.X, g.P3.X) > 370));
+        }
+        var filled = Rasterizer.Render(new VectorDocument { Width = doc.Width, Height = doc.Height,
+            Palette = doc.Palette, Regions = doc.Regions, Strokes = [] });
+        for (int i = 0; i < 5; i++) Assert.True(filled.GetPixel(421 + 20 * i, 170).R < 128);
+        Assert.True(filled.GetPixel(180, 100).R < 128);
+        Assert.DoesNotContain(doc.Strokes, s => s.Segments.Any(g => g.P0.X > 410));
     }
 
     [Theory]
@@ -93,6 +116,13 @@ public class CenterlineCircleIntegrationTests
         // destroys the empty cavity and must never be replaced by a completed circle.
         var doc = Trace(p => Ring(p) || Solid(p) || Distance(p, a, b) <= 1.5);
         Assert.NotEmpty(doc.Strokes);
+        var rendered = Rasterizer.Render(doc);
+        for (int i = 1; i < 20; i++)
+        {
+            var p = a + (b - a) * (i / 20.0);
+            Assert.True(rendered.GetPixel((int)p.X, (int)p.Y).R < 128,
+                $"{kind} source ink lost at {p}");
+        }
         if (kind != "tangent") Assert.DoesNotContain(doc.Strokes, s => s.Closed);
     }
 
