@@ -263,6 +263,10 @@ public static partial class Centerline
             widthAt[q] = width;
         }
         var chains = tracer.Trace(c.Pixels).ToList();
+        // Isolated ridge maxima can be the only observation between two staircase
+        // fragments. They are evidence for this local arc pass, never legacy strokes.
+        foreach (int q in c.Pixels)
+            if (skel[q] && tracer.Degree(q) == 0) chains.Add(([q], false));
         var arcOwned = RecoverLocalArcs(chains, c.Id, comp, inkMask, widthAt, dtSq, thin, minLen, ink, w, h, strokes);
         foreach (var (pixels, closed) in chains)
         {

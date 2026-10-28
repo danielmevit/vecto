@@ -16,8 +16,9 @@ public static partial class Centerline
         for (int i = 0; i < chains.Count; i++)
         {
             var (pixels, closed) = chains[i];
-            if (closed || pixels.Count < 2) continue;
-            Add(pixels[0], false); Add(pixels[^1], true);
+            if (closed || pixels.Count == 0) continue;
+            Add(pixels[0], false);
+            if (pixels.Count > 1) Add(pixels[^1], true);
             void Add(int q, bool end)
             {
                 var key = (q % w / cell, q / w / cell);
@@ -28,7 +29,7 @@ public static partial class Centerline
         int candidates = 0, budget = maxSamples;
         foreach (var (seed, closed) in chains.OrderByDescending(c => c.Pixels.Count))
         {
-            if (closed || owned.Contains(seed) || seed.Count < 24 || candidates++ >= maxCandidates) continue;
+            if (closed || owned.Contains(seed) || seed.Count < 24 || seed.Count > 4096 || candidates++ >= maxCandidates) continue;
             var points = seed.Select(Point).ToList();
             if (!Fit(points, out var center, out double radius)) continue;
             double width = Median(seed.Select(Width).ToList());
@@ -63,81 +64,214 @@ public static partial class Centerline
                             foreach (var entry in entries)
                             {
                                 var run = chains[entry.Chain].Pixels;
-                                if (members.Contains(run) || owned.Contains(run) || !Uniform(run, width)) continue;
+                                if (members.Contains(run) || owned.Contains(run)) continue;
+                                if (run.Count + points.Count > 4096) continue;
                                 var q = Point(entry.End ? run[^1] : run[0]);
+                                var other = Point(entry.End ? run[0] : run[^1]);
+                                // A tiny chain can put both endpoints in this bucket.
+                                // It is one continuation, not two competing branches.
+                                if ((other - tip).LengthSq < (q - tip).LengthSq ||
+                                    (entry.End && (other - tip).LengthSq == (q - tip).LengthSq)) continue;
                                 if ((q - tip).Length > Math.Min(8, width * .55)) continue;
+                                if (!Uniform(run, width)) continue;
                                 var ordered = run.Select(Point).ToList();
                                 if (entry.End) ordered.Reverse();
-                                if (ordered.Any(p => Math.Abs((p - center).Length - radius) > 1.2)) continue;
+                                // A short partial-circle fit has uncertain centre/radius.
+                                // Refit the combined observation before accepting it;
+                                // the final common fit retains the 1.5px radial gate.
+                                double uncertainty = Math.Clamp(radius * .05, 2, 4);
+                                if (ordered.Any(p => Math.Abs((p - center).Length - radius) > uncertainty)) continue;
+                                if (!Fit(points.Concat(ordered).ToList(), out var joinedCenter, out double joinedRadius) ||
+                                    (joinedCenter - center).Length > uncertainty || Math.Abs(joinedRadius - radius) > uncertainty) continue;
                                 double advance = Delta(Angle(ordered[^1]) - Angle(tip)) * direction * (side == 0 ? -1 : 1);
                                 if (advance <= 0 || advance > Math.PI / 2) continue;
                                 int window = Math.Min(12, ordered.Count - 1);
-                                var tangent = ordered[window] - ordered[0];
+                                var inner = side == 0 ? points[Math.Min(12, points.Count - 1)] : points[Math.Max(0, points.Count - 13)];
+                                var tangent = ordered.Count >= 8 ? ordered[window] - ordered[0] : ordered[^1] - inner;
                                 var radial = q - center;
                                 if (Math.Abs(tangent.Dot(radial)) > .45 * tangent.Length * radius) continue;
                                 if (!SupportedSweep(Angle(tip), Delta(Angle(q) - Angle(tip)), center, radius, width)) continue;
                                 matches.Add((run, ordered));
                             }
                         }
-                    if (matches.Count > 1) { ambiguous = true; break; }
                     if (matches.Count == 0) break;
+                    // Several successive fragments can be within one search radius.
+                    // They are not branches if their angular intervals are disjoint.
+                    double Progress(Vec2 p) => Delta(Angle(p) - Angle(tip)) * direction * (side == 0 ? -1 : 1);
+                    matches.Sort((a, b) => Progress(a.Points[0]).CompareTo(Progress(b.Points[0])));
+                    for (int j = 1; j < matches.Count; j++)
+                        if (matches[j].Chain.Count >= 8 && matches[j - 1].Chain.Count >= 8 &&
+                            Progress(matches[j].Points[0]) < Progress(matches[j - 1].Points[^1]) - .001)
+                            ambiguous = true;
+                    if (ambiguous) break;
                     var match = matches[0];
                     members.Add(match.Chain);
                     if (side == 0) { match.Points.Reverse(); points.InsertRange(0, match.Points); }
                     else points.AddRange(match.Points);
+                    Fit(points, out center, out radius);
                 }
             }
             if (ambiguous || points.Count < minLen || !Fit(points, out center, out radius)) continue;
             start = Angle(points[0]); end = start;
             foreach (var point in points.Skip(1)) end += Delta(Angle(point) - end);
             if ((end - start) * direction <= 0) continue;
+            // EDT maxima can sit one pixel to one side of a rotated ribbon. Refit
+            // unbiased radial interface midpoints before extrapolating its ends.
+            var middle = new List<Vec2>();
+            var rayWidths = new List<double>();
+            int rays = Math.Min(4096, (int)Math.Ceiling(Math.Abs(end - start) * radius));
+            for (int k = 0; k <= rays; k++)
+            {
+                double a = start + (end - start) * k / Math.Max(1, rays);
+                double observedWidth = MeasureArcSection(a, center, radius, width, out double shift);
+                if (observedWidth <= 0) continue;
+                middle.Add(center + new Vec2(DetMath.Cos(a), DetMath.Sin(a)) * (radius + shift));
+                rayWidths.Add(observedWidth);
+            }
+            if (middle.Count >= 24 && Fit(middle, out var refinedCenter, out double refinedRadius) &&
+                (refinedCenter - center).Length <= 2 && Math.Abs(refinedRadius - radius) <= 2 &&
+                points.All(q => Math.Abs((q - refinedCenter).Length - refinedRadius) <= 1.5))
+            {
+                double oldStart = start, oldEnd = end;
+                var first = center + new Vec2(DetMath.Cos(oldStart), DetMath.Sin(oldStart)) * radius;
+                var last = center + new Vec2(DetMath.Cos(oldEnd), DetMath.Sin(oldEnd)) * radius;
+                center = refinedCenter; radius = refinedRadius;
+                start = Angle(first); end = start + (oldEnd - oldStart) + Delta(Angle(last) - Angle(first) - (oldEnd - oldStart));
+            }
+            if (rayWidths.Count >= 24)
+            {
+                double observedWidth = Median(rayWidths);
+                if (observedWidth <= thin && Math.Abs(observedWidth - width) <= Math.Max(2, width * .15))
+                    width = observedWidth;
+            }
             // Follow only short source-supported continuations. The radial cross-section
             // must remain centred and thin, so solids, straight tangencies and gaps stop it.
             double increment = .5 / radius;
+            // A true branch may contaminate a few endpoint cross-sections. Stop on
+            // its thin side; the unrepresented junction ink remains source fill.
+            start = Trim(start, direction); end = Trim(end, -direction);
             start = Grow(start, -direction); end = Grow(end, direction);
             double sweep = end - start;
-            if (Math.Abs(sweep) < .7 || Math.Abs(sweep) > Math.PI * 1.9 ||
+            if (Math.Abs(sweep) < Math.PI / 3 || Math.Abs(sweep) > Math.PI * 1.9 ||
                 radius * Math.Abs(sweep) < minLen || !SupportedSweep(start, sweep, center, radius, width)) continue;
+            var measuredWidths = new List<double>();
+            int sections = (int)Math.Ceiling(radius * Math.Abs(sweep));
+            for (int k = 0; k <= sections; k++)
+                measuredWidths.Add(MeasureSection(start + sweep * k / sections, center, radius, width));
+            if (measuredWidths.Any(value => value <= 0)) continue;
+            double measuredWidth = Median(measuredWidths);
+            if (measuredWidth > thin || Math.Abs(measuredWidth - width) > Math.Max(2, width * .15)) continue;
+            width = measuredWidth;
             strokes.Add(ArcStroke(center, radius, start, sweep, width, ink));
             foreach (var member in members) owned.Add(member);
 
             double Angle(Vec2 p) => Math.Atan2(p.Y - center.Y, p.X - center.X);
+            double Trim(double angle, double sign)
+            {
+                for (int k = 0; k <= 4 * width; k++)
+                {
+                    double candidate = angle + sign * increment * k;
+                    if (Section(candidate, center, radius, width)) return candidate;
+                }
+                return angle;
+            }
             double Grow(double angle, double sign)
             {
                 double grown = angle;
-                int count = (int)Math.Ceiling(2 * width / .5);
+                int count = (int)Math.Ceiling(4 * width / .5);
                 for (int k = 1; k <= count; k++)
                 {
                     double next = angle + sign * increment * k;
                     if (!Section(next, center, radius, width)) break;
                     grown = next;
                 }
-                return grown;
+                // A tangent straight run can support a circle for a few pixels past
+                // the actual join. Locate that join from nearby ungrown line evidence,
+                // using the same endpoint grid rather than scanning unrelated chains.
+                var seen = new HashSet<int>();
+                double? tangentAngle = null;
+                for (double d = 0; d <= 4 * width; d += 4)
+                {
+                    double a = angle + sign * d / radius;
+                    var tip = center + new Vec2(DetMath.Cos(a), DetMath.Sin(a)) * radius;
+                    int bx = (int)tip.X / cell, by = (int)tip.Y / cell;
+                    for (int yy = by - 1; yy <= by + 1; yy++)
+                        for (int xx = bx - 1; xx <= bx + 1; xx++)
+                        {
+                            if (!buckets.TryGetValue((xx, yy), out var entries) || entries.Count > 16) continue;
+                            foreach (var entry in entries)
+                            {
+                                if (!seen.Add(entry.Chain)) continue;
+                                var line = chains[entry.Chain].Pixels;
+                                if (line.Count < minLen || members.Contains(line)) continue;
+                                // Only the endpoint's finite straight prefix matters: an
+                                // outline chain can turn a real corner farther away.
+                                int take = Math.Min(line.Count, Math.Max(minLen, (int)Math.Ceiling(4 * width)));
+                                var prefix = (entry.End ? line.AsEnumerable().Reverse() : line).Take(take).ToList();
+                                double lineWidth = Median(prefix.Select(Width).ToList());
+                                if (Math.Abs(lineWidth - width) > Math.Max(2, width * .2)) continue;
+                                var observed = prefix.Select(Point).ToList();
+                                var mean = observed.Aggregate(new Vec2(), (sum, q) => sum + q) * (1.0 / observed.Count);
+                                double xxSum = 0, yySum = 0, xySum = 0;
+                                foreach (var q in observed)
+                                {
+                                    var v = q - mean;
+                                    xxSum += v.X * v.X; yySum += v.Y * v.Y; xySum += v.X * v.Y;
+                                }
+                                double lineAngle = .5 * Math.Atan2(2 * xySum, xxSum - yySum);
+                                var axis = new Vec2(DetMath.Cos(lineAngle), DetMath.Sin(lineAngle));
+                                if ((observed[^1] - observed[0]).Length < .75 * minLen ||
+                                    observed.Any(q => Math.Abs(Cross(q - mean, axis)) > 1)) continue;
+                                var p0 = mean;
+                                var p1 = observed[0];
+                                var foot = p0 + axis * (center - p0).Dot(axis);
+                                if (Math.Abs((foot - center).Length - radius) > 1.5 ||
+                                    (foot - p1).Length > 4 * width) continue;
+                                double target = angle + Delta(Angle(foot) - angle);
+                                double advance = (target - angle) * sign;
+                                if (advance < 0 || advance * radius > 4 * width ||
+                                    !SupportedSweep(angle, target - angle, center, radius, width)) continue;
+                                if (tangentAngle.HasValue && Math.Abs(target - tangentAngle.Value) * radius > 2)
+                                    return angle; // competing tangent evidence: do not extrapolate
+                                tangentAngle = target;
+                            }
+                        }
+                }
+                return tangentAngle ?? grown;
             }
         }
         return owned;
 
         bool Uniform(List<int> run, double width)
         {
-            if (run.Count < 2) return false;
-            return run.All(q => Width(q) >= .8 * width && Width(q) <= 1.2 * width && Width(q) <= thin);
+            if (run.Count == 0) return false;
+            var widths = run.Select(Width).Order().ToList();
+            return widths[^1] <= thin && widths[widths.Count / 10] >= .8 * width &&
+                widths[widths.Count * 9 / 10] <= 1.2 * width;
         }
         bool Fit(List<Vec2> points, out Vec2 center, out double radius) =>
-            CenterlineCircles.FitCavity(points, out center, out radius, out _, out _, out _);
+            CenterlineCircles.FitCavity(points, out center, out radius, out _, out _, out _, .65, 1.5);
         bool At(Vec2 p) => p.X >= 0 && p.Y >= 0 && p.X < w && p.Y < h &&
             inkMask[(int)p.Y * w + (int)p.X] && comp[(int)p.Y * w + (int)p.X] == id;
-        bool Section(double angle, Vec2 center, double radius, double width)
+        bool Section(double angle, Vec2 center, double radius, double width) =>
+            MeasureSection(angle, center, radius, width) > 0;
+        double MeasureSection(double angle, Vec2 center, double radius, double width) =>
+            MeasureArcSection(angle, center, radius, width, out _);
+        double MeasureArcSection(double angle, Vec2 center, double radius, double width, out double shift)
         {
-            if (--budget < 0) return false;
+            shift = 0;
+            if (--budget < 0) return 0;
             var n = new Vec2(DetMath.Cos(angle), DetMath.Sin(angle));
             var p = center + n * radius;
             for (int band = -2; band <= 2; band++)
-                if (!At(p + n * (band * width * .2))) return false;
+                if (!At(p + n * (band * width * .2))) return 0;
             double inside = 0, outside = 0;
             while (inside <= width && At(p - n * inside)) inside += .5;
             while (outside <= width && At(p + n * outside)) outside += .5;
-            return inside <= width && outside <= width && Math.Abs(inside - outside) <= 2 &&
-                Math.Abs(inside + outside - .5 - width) <= Math.Max(1.5, width * .15);
+            double measured = inside + outside - .5;
+            shift = (outside - inside) * .5;
+            return inside <= width && outside <= width && Math.Abs(inside - outside) <= 3 &&
+                Math.Abs(measured - width) <= Math.Max(2.5, width * .15) ? measured : 0;
         }
         bool SupportedSweep(double start, double sweep, Vec2 center, double radius, double width)
         {

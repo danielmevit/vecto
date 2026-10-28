@@ -136,7 +136,7 @@ internal static class CenterlineCircles
     }
 
     internal static bool FitCavity(IEnumerable<Vec2> points, out Vec2 center, out double radius,
-        out int count, out double rms, out double maxError)
+        out int count, out double rms, out double maxError, double rmsTolerance = 0.5, double maxTolerance = 1.0)
     {
         center = default; radius = rms = maxError = 0; count = 0;
         var mean = new Vec2();
@@ -169,7 +169,7 @@ internal static class CenterlineCircles
         rms = Math.Sqrt(sq / count);
         // Fixed pixel tolerances express raster uncertainty; scaling a wrong ellipse
         // up must not make it a circle. Interior islands participate in these residuals.
-        return double.IsFinite(radius) && rms <= 0.5 && maxError <= 1.0;
+        return double.IsFinite(radius) && rms <= rmsTolerance && maxError <= maxTolerance;
     }
 
     static Proposal? MeasureRing(bool[] ink, int[] ids, int w, int h, int sourceId,
