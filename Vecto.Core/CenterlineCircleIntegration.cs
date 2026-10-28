@@ -47,11 +47,12 @@ public static partial class Centerline
 
     /// <summary>
     /// Replaces the duplicate ring fragments of every accepted circle with the circle
-    /// itself: a fragment is removed only when its whole fitted geometry lies inside the
-    /// circle's painted band and rides only the circle's source component — the circle
-    /// paints that ink whole. Touching or crossing hatches, leaders and attached solids
-    /// leave the band and keep their strokes; the solid stays filled. The circle is
-    /// appended after the local strokes, in the deterministic proposal order.
+    /// itself: a fragment is removed only when its whole painted band (fitted geometry
+    /// plus its own half width) lies inside the circle's band and rides only the
+    /// circle's source component — the circle paints that ink whole. Touching or
+    /// crossing hatches, leaders and attached solids leave the band and keep their
+    /// strokes; the solid stays filled. The circle is appended after the local
+    /// strokes, in the deterministic proposal order.
     /// </summary>
     static void IntegrateCircles(List<StrokePath> strokes, List<CenterlineCircles.Proposal> proposals,
         int ink, int[] comp, int w, int h)
@@ -64,12 +65,14 @@ public static partial class Centerline
     }
 
     /// <summary>
-    /// One closed weighted circle at the measured geometry: four exact quarter cubics
-    /// whose controls sit at tangent · r · 4/3·tan(π/8) — the same construction
-    /// <see cref="BezierFitter"/> emits for arcs, so the existing writers treat it
-    /// exactly like a fitted ring (SVG keeps its standard cubic circle representation;
-    /// DXF recovers the analytic bulges). Cardinal endpoints make the ring close
-    /// exactly; the stroke weight is the radially measured source width.
+    /// One closed weighted circle at the measured geometry: the standard four-quarter
+    /// cubic representation of a circle (controls at tangent · r · 4/3·tan(π/8)) — the
+    /// same construction <see cref="BezierFitter"/> emits for arcs. This is the usual
+    /// cubic APPROXIMATION of a circle (maximum radial error about 2.7·10⁻⁴·r), not a
+    /// mathematically exact circle cubic; the existing writers treat it exactly like a
+    /// fitted ring (SVG keeps the standard cubic circle representation; DXF recovers
+    /// the analytic bulges). Cardinal endpoints make the ring close exactly; the
+    /// stroke weight is the radially measured source width.
     /// </summary>
     static StrokePath CircleStroke(CenterlineCircles.Proposal proposal, int ink)
     {
@@ -103,21 +106,30 @@ public static partial class Centerline
                 strokes.RemoveAt(s);
     }
 
-    /// <summary>True when every point of the stroke's fitted geometry lies inside the
-    /// circle's band and its samples ride only the circle's source component. A foreign
-    /// component's ink inside the band is never claimed; paper cells (fit wobble) do
-    /// not veto ownership.</summary>
-    static bool OwnedByCircle(StrokePath stroke, CenterlineCircles.Proposal proposal,
+    /// <summary>True when the stroke's whole painted band lies inside the circle's band
+    /// and its samples ride only the circle's source component. Every segment — straight
+    /// ones included — is walked at <see cref="OwnershipStep"/> steps: a straight piece
+    /// must never be trusted from its endpoints alone, because a chord whose ends sit on
+    /// the ring crosses the hollow centre, and a long tangent's middle sits at a
+    /// different distance than its ends. The proof is conservative: consecutive samples
+    /// sit at most <see cref="OwnershipStep"/> apart along the curve and distance from
+    /// the centre is 1-Lipschitz, so tightening the band by the step covers every
+    /// unsampled point, and subtracting the stroke's own half width covers the ink the
+    /// stroke paints, not just its centreline. A foreign component's ink inside the band
+    /// is never claimed; paper cells (fit wobble) do not veto ownership.</summary>
+    internal static bool OwnedByCircle(StrokePath stroke, CenterlineCircles.Proposal proposal,
         int[] comp, int w, int h, double band)
     {
+        double reach = band - OwnershipStep - stroke.Width / 2;
+        if (reach < 0) return false;
         foreach (var seg in stroke.Segments)
         {
             double lengthBound = (seg.P1 - seg.P0).Length + (seg.P2 - seg.P1).Length + (seg.P3 - seg.P2).Length;
-            int steps = seg.IsLine(0.02) ? 1 : Math.Max(1, (int)Math.Ceiling(lengthBound * 2));
+            int steps = Math.Max(1, (int)Math.Ceiling(lengthBound / OwnershipStep));
             for (int k = 0; k <= steps; k++)
             {
                 var q = seg.Eval((double)k / steps);
-                if (Math.Abs((q - proposal.Center).Length - proposal.Radius) > band) return false;
+                if (Math.Abs((q - proposal.Center).Length - proposal.Radius) > reach) return false;
                 int x = (int)q.X, y = (int)q.Y;
                 if ((uint)x >= (uint)w || (uint)y >= (uint)h) continue;
                 int id = comp[y * w + x];
@@ -126,4 +138,9 @@ public static partial class Centerline
         }
         return true;
     }
+
+    /// <summary>Sampling step (px) of the ownership proof: consecutive samples lie this
+    /// far apart along the segment at most, so the band tightened by this step bounds
+    /// every unsampled curve point as well.</summary>
+    const double OwnershipStep = 0.5;
 }
