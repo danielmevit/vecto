@@ -571,6 +571,54 @@ public class CenterlineTests
         AssertInkRetained(source, doc, scale);
     }
 
+    [Theory]
+    [InlineData(1, 0, false)]
+    [InlineData(2, 0, false)]
+    [InlineData(3, 0, false)]
+    [InlineData(4, 0, false)]
+    [InlineData(1, 37, false)]
+    [InlineData(3, 43.6, false)]
+    [InlineData(4, 90, false)]
+    [InlineData(3, 0, true)]
+    [InlineData(4, 30, true)]
+    public void ShortOpenOnlyLabels_StayFilled(int count, double degrees, bool mixedWeight)
+    {
+        // Open E-like glyphs (no closure bar, no counters) at an off-grid origin.
+        double angle = degrees * Math.PI / 180, cs = Math.Cos(angle), sn = Math.Sin(angle);
+        var img = Make(1000, 500, (x, y) =>
+        {
+            double xx = x + 0.5, yy = y + 0.5;
+            if (xx >= 10 && xx < 990 && yy >= 15 && yy < 16) return true;
+            double u = (xx - 350.35) * cs + (yy - 200.65) * sn;
+            double v = -(xx - 350.35) * sn + (yy - 200.65) * cs;
+            if (u < 0 || u >= 30 * (count - 1) + 14 || v < 0 || v >= 40) return false;
+            double t = mixedWeight && (int)(u / 30) % 2 == 1 ? 3 : 2;
+            double gx = u % 30;
+            return gx < 14 && (gx < t || v < t || v >= 40 - t || (v >= 19 && v < 19 + t + 1));
+        });
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes);
+        Assert.All(doc.Strokes, s => Assert.All(s.Segments, g =>
+            Assert.True(g.P0.Y < 30 && g.P3.Y < 30)));
+        AssertInkRetained(img, doc, 1);
+    }
+
+    [Fact]
+    public void CompactRectangleRow_StaysFilledWithoutCornerStrokes()
+    {
+        var img = Make(1000, 200, (x, y) =>
+            (x >= 10 && x < 990 && y == 15) ||
+            Enumerable.Range(0, 5).Any(i =>
+            {
+                int x0 = 100 + 50 * i;
+                return x >= x0 && x < x0 + 30 && y >= 80 && y < 120 &&
+                    (x < x0 + 3 || x >= x0 + 27 || y < 83 || y >= 117);
+            }));
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes);
+        AssertInkRetained(img, doc, 1);
+    }
+
     [Fact]
     public void CompactSingleCavityOutline_IsNotAutomaticallyText()
     {

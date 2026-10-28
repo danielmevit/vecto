@@ -113,58 +113,93 @@ public static partial class Centerline
         }
     }
 
-    // A compact component with multiple substantial counters supplies its own text
-    // evidence: a one-character label has no row peers. Use the typical ridge width,
-    // not a solid boss's maximum DT, to exclude connected structural outlines. This
-    // only vetoes NEW local recovery; original whole-component decisions are unchanged.
+    // VEC107: ONE positive-geometry requirement replaces letter-specific peer rules.
+    // A compact component whose intrinsic oriented extent is within the text scale of
+    // its OWN typical ridge width is ambiguous between a short label (E, F, H, L, 1, 7,
+    // B, 8 …) and a small CAD primitive. New local recovery is admitted only for a
+    // coherent simple primitive: an isolated full rectangular frame around exactly one
+    // counter. Thin annuli are excluded before this pass and keep their own path.
+    // Everything else stays filled. Original whole-component decisions are unchanged;
+    // long hatches and large outlines exceed the compact scale and are not affected.
     static void MarkShortLocalText(List<Comp> candidates,
         Dictionary<Comp, (double Along, double Across, double X, double Y, double Width)> shapes,
         double median, int w)
     {
-        var anchors = new List<Comp>();
+        var compact = new List<Comp>();
         foreach (var c in candidates)
         {
             var s = shapes[c];
-            if (Math.Max(s.Along, s.Across) > TextMaxFactor * (s.Width + ThinSlack)) continue;
-            if (!HasMultipleCounters(c, s.Width, w)) continue;
-            anchors.Add(c);
-            if (!c.Centerline && LocalEligible(c, median)) c.TextRow = true;
+            if (Math.Max(s.Along, s.Across) <= TextMaxFactor * (s.Width + ThinSlack)) compact.Add(c);
         }
-        // One-hop context preserves adjacent open forms without inventing an OCR
-        // decision for every compact shape. Never use newly protected neighbours as
-        // anchors, and never veto the annuli excluded before this pass.
-        anchors.Sort((a, b) => a.MinX.CompareTo(b.MinX));
-        var lefts = anchors.Select(c => c.MinX).ToArray();
-        foreach (var c in candidates)
+        foreach (var c in compact)
         {
             if (c.Centerline || !LocalEligible(c, median)) continue;
             var s = shapes[c];
-            if (Math.Max(s.Along, s.Across) > TextMaxFactor * (s.Width + ThinSlack)) continue;
-            int lo = Array.BinarySearch(lefts, c.MinX - 4 * c.MaxDim);
-            if (lo < 0) lo = ~lo;
-            for (int j = lo; j < anchors.Count && anchors[j].MinX <= c.MaxX + 4 * c.MaxDim; j++)
-            {
-                var a = anchors[j];
-                var t = shapes[a];
-                if (c.MaxDim > 2 * a.MaxDim || a.MaxDim > 2 * c.MaxDim ||
-                    s.Width > 2 * t.Width || t.Width > 2 * s.Width) continue;
-                if (Math.Abs(s.X * t.X + s.Y * t.Y) < 0.866) continue;
-                double dx = (c.MinX + c.MaxX - a.MinX - a.MaxX) * 0.5;
-                double dy = (c.MinY + c.MaxY - a.MinY - a.MaxY) * 0.5;
-                double along = Math.Abs(dx * t.X + dy * t.Y);
-                double across = Math.Abs(-dx * t.Y + dy * t.X);
-                if (along > 0.35 * Math.Min(c.MaxDim, a.MaxDim) ||
-                    across < 0.5 * (s.Across + t.Across) ||
-                    across > 1.5 * Math.Max(c.MaxDim, a.MaxDim)) continue;
-                c.TextRow = true;
-                break;
-            }
+            if (CounterCount(c, s.Width, w, 2) == 1 && IsRectangularFrame(c, s, w) && !HasCompactPeer(c, s, compact, shapes))
+                continue;
+            c.TextRow = true;
         }
+    }
+
+    // A rectangle beside similar compact shapes is ambiguous with a row of block
+    // 0/O/D glyphs, and thick frames do not recover as one coherent closed loop.
+    // Any similar-scale compact neighbour within four extents keeps it filled.
+    static bool HasCompactPeer(Comp c, (double Along, double Across, double X, double Y, double Width) s,
+        List<Comp> compact, Dictionary<Comp, (double Along, double Across, double X, double Y, double Width)> shapes)
+    {
+        double cx = (c.MinX + c.MaxX) * 0.5, cy = (c.MinY + c.MaxY) * 0.5;
+        foreach (var o in compact)
+        {
+            if (o == c || o.MaxDim > 2 * c.MaxDim || c.MaxDim > 2 * o.MaxDim) continue;
+            var t = shapes[o];
+            if (t.Width > 2 * s.Width || s.Width > 2 * t.Width) continue;
+            double dx = (o.MinX + o.MaxX) * 0.5 - cx, dy = (o.MinY + o.MaxY) * 0.5 - cy;
+            if (dx * dx + dy * dy <= 16.0 * c.MaxDim * c.MaxDim) return true;
+        }
+        return false;
+    }
+
+    // Full rectangular outline in the component's own principal frame: nearly all ink
+    // lies in a band of the own ridge width along the oriented box, and every side of
+    // that band is substantially inked. A partial frame (E, F, L, C) fails one side.
+    static bool IsRectangularFrame(Comp c, (double Along, double Across, double X, double Y, double Width) s, int w)
+    {
+        double band = s.Width + 1.5;
+        if (s.Along < 4 * band || s.Across < 4 * band) return false;
+        double cx = (c.MinX + c.MaxX) * 0.5, cy = (c.MinY + c.MaxY) * 0.5;
+        double minU = double.PositiveInfinity, maxU = double.NegativeInfinity;
+        double minV = double.PositiveInfinity, maxV = double.NegativeInfinity;
+        foreach (int i in c.Pixels)
+        {
+            double x = i % w - cx, y = i / w - cy;
+            double u = x * s.X + y * s.Y, v = -x * s.Y + y * s.X;
+            minU = Math.Min(minU, u); maxU = Math.Max(maxU, u);
+            minV = Math.Min(minV, v); maxV = Math.Max(maxV, v);
+        }
+        // Coverage per side along its length, in unit bins.
+        int nu = (int)Math.Ceiling(maxU - minU) + 1, nv = (int)Math.Ceiling(maxV - minV) + 1;
+        var top = new bool[nu]; var bottom = new bool[nu]; var left = new bool[nv]; var right = new bool[nv];
+        int inside = 0;
+        foreach (int i in c.Pixels)
+        {
+            double x = i % w - cx, y = i / w - cy;
+            double u = x * s.X + y * s.Y - minU, v = -x * s.Y + y * s.X - minV;
+            double du = maxU - minU - u, dv = maxV - minV - v;
+            bool any = false;
+            if (v <= band) { top[(int)u] = true; any = true; }
+            if (dv <= band) { bottom[(int)u] = true; any = true; }
+            if (u <= band) { left[(int)v] = true; any = true; }
+            if (du <= band) { right[(int)v] = true; any = true; }
+            if (any) inside++;
+        }
+        static double Share(bool[] a) => a.Count(b => b) / (double)a.Length;
+        return inside >= 0.95 * c.Pixels.Count &&
+            Math.Min(Math.Min(Share(top), Share(bottom)), Math.Min(Share(left), Share(right))) >= 0.9;
     }
 
     // Four-connected ink uses eight-connected paper, so diagonal raster pinholes
     // are not invented counters. Ignore cavities smaller than a stroke-width square.
-    static bool HasMultipleCounters(Comp c, double width, int w)
+    static int CounterCount(Comp c, double width, int w, int limit)
     {
         int bw = c.MaxX - c.MinX + 3, bh = c.MaxY - c.MinY + 3;
         var seen = new bool[bw * bh];
@@ -191,9 +226,9 @@ public static partial class Centerline
                         queue[tail++] = n;
                     }
             }
-            if (!exterior && tail >= width * width && ++counters >= 2) return true;
+            if (!exterior && tail >= width * width && ++counters >= limit) return counters;
         }
-        return false;
+        return counters;
     }
 
     // Uniform radial ink in a near-square box is positive circular CAD evidence,
