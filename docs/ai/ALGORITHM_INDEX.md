@@ -83,3 +83,10 @@ faithful independent SVG renderer.
 - Same input + seed → byte-identical SVG; output is culture-invariant (de-DE guard).
 - An anti-aliased axis-aligned box with sub-pixel borders traces to exactly 4 lines that
   are *exactly* horizontal/vertical (1e-6) at the encoded sub-pixel positions (±0.2 px).
+
+VEC114 local junction finishing (`CenterlineLocalJunctions.cs`): after legacy final
+snapping, before local ink release, spatially indexed same-component painted
+line/circle bands may shorten finite local line endpoints to their centerline.
+Original component cross-sections and the complete removed centerline interval
+must support the join; parallel, foreign, unsupported and crossing ends stay.
+Accepted circle proposals retain their measured geometry and source identity.

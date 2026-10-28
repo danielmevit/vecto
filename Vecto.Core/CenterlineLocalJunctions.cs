@@ -71,7 +71,7 @@ public static partial class Centerline
                         u = (delta.X * tangent.Y - delta.Y * tangent.X) / cross;
                         var q0 = p + dir * u;
                         double along = (q0 - t.A).Dot(tangent);
-                        if (along < t.Width || along > (t.B - t.A).Length - t.Width) continue;
+                        if (along < 0 || along > (t.B - t.A).Length) continue;
                         normal = new Vec2(-tangent.Y, tangent.X);
                         if (Math.Abs((p - t.A).Dot(normal)) > t.Width / 2) continue;
                     }

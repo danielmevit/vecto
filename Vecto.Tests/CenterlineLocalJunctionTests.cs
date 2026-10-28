@@ -26,6 +26,30 @@ public class CenterlineLocalJunctionTests
         Assert.Equal(new Vec2(150, crossing ? 170 : 156), p);
     }
 
+    [Fact]
+    public void CircleHatchesPreserveCircleSolidAndDisjointGlyphInk()
+    {
+        var image = new RasterImage(320, 220);
+        for (int y = 0; y < image.Height; y++)
+            for (int x = 0; x < image.Width; x++)
+            {
+                var p = new Vec2(x + .5, y + .5);
+                bool ring = Math.Abs((p - new Vec2(90, 100)).Length - 40) <= 3;
+                bool solid = p.X >= 128 && p.X < 220 && p.Y >= 60 && p.Y < 140;
+                bool hatch = p.X >= 15 && p.X <= 53 && Math.Abs(p.Y - 100) <= 1.5;
+                bool glyph = p.X >= 270 && p.X < 280 && p.Y >= 170 && p.Y < 185;
+                image.SetPixel(x, y, ring || solid || hatch || glyph
+                    ? new Rgba32(0, 0, 0, 255) : new Rgba32(255, 255, 255, 255));
+            }
+        var doc = Tracer.Trace(image, new TraceOptions { Style = ImageStyle.LineArt }).Document;
+        var circle = Assert.Single(doc.Strokes, s => s.Closed);
+        Assert.Equal(4, circle.Segments.Count);
+        var rendered = Rasterizer.Render(doc);
+        Assert.True(rendered.GetPixel(180, 100).R < 128);
+        Assert.True(rendered.GetPixel(275, 177).R < 128);
+        Assert.True(rendered.GetPixel(30, 100).R < 128);
+    }
+
     static Vec2 Run(double scale, double degrees, bool crossing, bool gap, bool foreign)
     {
         const int w = 400;
