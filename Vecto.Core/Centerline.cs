@@ -216,6 +216,7 @@ public static partial class Centerline
         SeparateLocalPrimitives(strokes, local, comp, widthAt, w, h);
         RationalizeLineAngles(strokes);
         SnapEndsToIntersections(strokes);
+        RepairLocalJunctions(strokes, circles, local, comp, w, h);
         ReleaseLocalInk(strokes, local, comp, labels, paper, w, h);
         return strokes;
     }
