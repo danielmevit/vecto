@@ -135,7 +135,7 @@ internal static class CenterlineCircles
         }
     }
 
-    static bool FitCavity(IEnumerable<Vec2> points, out Vec2 center, out double radius,
+    internal static bool FitCavity(IEnumerable<Vec2> points, out Vec2 center, out double radius,
         out int count, out double rms, out double maxError)
     {
         center = default; radius = rms = maxError = 0; count = 0;

@@ -262,8 +262,11 @@ public static partial class Centerline
             if (Twin(skel, inkMask, dtSq, q % w, q / w, q, w, h) >= 0) width += 1;
             widthAt[q] = width;
         }
-        foreach (var (pixels, closed) in tracer.Trace(c.Pixels))
+        var chains = tracer.Trace(c.Pixels).ToList();
+        var arcOwned = RecoverLocalArcs(chains, c.Id, comp, inkMask, widthAt, dtSq, thin, minLen, ink, w, h, strokes);
+        foreach (var (pixels, closed) in chains)
         {
+            if (arcOwned.Contains(pixels)) continue;
             if (pixels.Count < minLen) continue;
             if (!closed) tracer.Extend(pixels, growLen);
             // a pixel is locally thin by its own DT: grown tips carry no ridge width sample
