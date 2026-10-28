@@ -142,6 +142,16 @@ public static partial class Centerline
         MarkTextRows(comps, median, widthAt, w);
         MarkOrientedLocalTextRows(comps, median, widthAt, w);
 
+        // VEC106: the explicit non-text local-eligible mixed components are the only
+        // circle-eligible set (whole-component rings keep their existing path and glyph
+        // rows stay filled). Proposals read the ORIGINAL ink/component planes — the call
+        // sits before any source erasure below.
+        var local = new HashSet<int>();
+        foreach (var c in comps)
+            if (!c.Centerline && LocalEligible(c, median))
+                local.Add(c.Id);
+        var circles = ProposeLocalCircles(inkMask, comp, local, comps, w, h, ct);
+
         int pruneLen = Math.Max(2, (int)Math.Ceiling(2 * median));
         int growLen = Math.Max(4, (int)Math.Ceiling(median));
         var strokes = new List<StrokePath>();
@@ -188,14 +198,17 @@ public static partial class Centerline
                     labels[i] = paper;
         // VEC95: mixed-width components (a solid attached to thin linework) give up only the
         // ink their supported local runs actually stroke; solids and the rest stay filled
-        var local = new HashSet<int>();
         foreach (var c in comps)
-            if (!c.Centerline && LocalEligible(c, median))
+            if (local.Contains(c.Id))
             {
                 ct.ThrowIfCancellationRequested();
-                local.Add(c.Id);
                 ExtractLocal(c, comp, skel, widthAt, dtSq, inkMask, ink, median, pruneLen, growLen, p, w, h, strokes);
             }
+        // VEC106: accepted circles replace the ring fragments local recovery traced and
+        // join the stroke list before the stage-3 passes (which skip closed strokes, so
+        // the circle keeps its measured geometry; the band it paints is released with
+        // the other local ink below)
+        IntegrateCircles(strokes, circles, ink, comp, w, h);
         // stage 3 junction pass: weld collinear pieces split by junctions or scan gaps,
         // then land every line endpoint that ends against another line on the exact
         // intersection — the strokes a CAD user sees cross and meet cleanly
