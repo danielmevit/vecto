@@ -1,4 +1,5 @@
 using Vecto.Core;
+using System.Reflection;
 
 namespace Vecto.Tests;
 
@@ -27,6 +28,27 @@ public class CenterlineCircleIntegrationTests
         Assert.InRange((center - new Vec2(90, 100)).Length, 0, 1.5);
         Assert.InRange(Math.Abs((circle.Segments[0].P0 - center).Length - 40), 0, 1.5);
         Assert.InRange(circle.Width, 5, 7);
+        // Reuse the established DXF parser and arc reconstruction, on actual public output.
+        var dxf = DxfWriter.Write(doc);
+        var polylines = Dxf<List<List<(int Code, string Value)>>>("RecordsIn", dxf, "ENTITIES", "POLYLINE");
+        int index = Assert.Single(Enumerable.Range(0, polylines.Count).Where(i =>
+            polylines[i].Any(p => p.Code == 40 && double.Parse(p.Value,
+                System.Globalization.CultureInfo.InvariantCulture) > 0) &&
+            Dxf<double>("Num", polylines[i], 70) == 1));
+        Assert.InRange(Math.Abs(Dxf<double>("Num", polylines[index], 40) - circle.Width), 0, .00001);
+        Assert.InRange(Math.Abs(Dxf<double>("Num", polylines[index], 41) - circle.Width), 0, .00001);
+        var vertices = Dxf<List<(double X, double Y, double B)>>("Vertices", dxf, index);
+        Assert.Equal(4, vertices.Count);
+        for (int i = 0; i < vertices.Count; i++)
+        {
+            var a = vertices[i];
+            var b = vertices[(i + 1) % vertices.Count];
+            Assert.InRange(Math.Abs(a.B + Math.Tan(Math.PI / 8)), 0, .000001);
+            var arc = Dxf<(Vec2 Center, double Radius, double Sweep)>("ArcFromBulge",
+                new Vec2(a.X, a.Y), new Vec2(b.X, b.Y), a.B);
+            Assert.InRange((arc.Center - new Vec2(center.X, 200 - center.Y)).Length, 0, .0001);
+            Assert.InRange(Math.Abs(arc.Radius - (circle.Segments[0].P0 - center).Length), 0, .0001);
+        }
         Assert.Contains(doc.Regions, r => doc.Palette[r.PaletteIndex].Color.R == 0 && r.Area > 4000);
     }
 
@@ -34,8 +56,12 @@ public class CenterlineCircleIntegrationTests
     public void WholeComponentRingIsNotDuplicated()
     {
         var doc = Trace(Ring);
-        Assert.Single(doc.Strokes);
-        Assert.True(doc.Strokes[0].Closed);
+        // Identical source on accepted edcaa6a produces eight open pieces.
+        // This fixture guards unchanged legacy behavior, not canonical admission.
+        Assert.Equal(8, doc.Strokes.Count);
+        Assert.All(doc.Strokes, stroke => Assert.False(stroke.Closed));
+        // Supported whole-component control: five r65/width9 rings plus one long line.
+        new CenterlineTests().CadCircleRowWithDrawingLine_KeepsFiveClosedStrokes(false);
     }
 
     [Theory]
@@ -69,6 +95,10 @@ public class CenterlineCircleIntegrationTests
         Assert.NotEmpty(doc.Strokes);
         if (kind != "tangent") Assert.DoesNotContain(doc.Strokes, s => s.Closed);
     }
+
+    static T Dxf<T>(string name, params object[] args) =>
+        (T)typeof(DxfWriterTests).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, args)!;
 
     static double Distance(Vec2 p, Vec2 a, Vec2 b)
     {
