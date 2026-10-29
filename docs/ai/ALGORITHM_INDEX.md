@@ -110,3 +110,13 @@ the seed already overruns into the verified straight attachment: backward
 correction requires the overrun centerline to remain in that painted side and
 no distinct circular section four widths beyond the foot. Crossing-contaminated
 sections may retain source fill rather than claim a complete arc.
+
+VEC126 filled-wall cap fitting retains editable finite anchors unless outward
+round-cap paint exceeds a two-pixel same-component source envelope (combined
+raster-boundary and fitted-centerline uncertainty). The tested cap footprint
+includes its half-pixel edge coverage. Only ends with long transverse filled-wall
+support and continuous inward source ink qualify; open ends remain unchanged.
+Search advances inward in quarter-pixel steps and accepts the first supported
+position, bounded by the original half-width. Released source ownership is still
+computed after final geometry, preserving uncovered filled-wall ink. Nonfinite
+lengths/widths are rejected. Anchor: `RepairLocalJunctions` / `FitCap`.

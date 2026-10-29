@@ -144,11 +144,86 @@ public class CenterlineLocalJunctionTests
         var circles = Activator.CreateInstance(method.GetParameters()[1].ParameterType)!;
         method.Invoke(null, [strokes, circles, new HashSet<int> { 1 }, comp, size, size]);
         var result = strokes[0].Segments[0];
-        if (wall) Assert.InRange((result.P0 - a).Dot(dir), scale, width / 2);
+        if (wall)
+        {
+            double move = (result.P0 - a).Dot(dir);
+            Assert.InRange(move, 0, width / 2);
+            // Independent raster geometry oracle: the source envelope is a union
+            // of pixel squares, and the outward painted disk must fit inside it.
+            var envelope = new HashSet<int>();
+            for (int y = 2; y < size - 2; y++)
+                for (int x = 2; x < size - 2; x++)
+                    if (comp[y * size + x] == 1)
+                        for (int dy = -2; dy <= 2; dy++)
+                            for (int dx = -2; dx <= 2; dx++)
+                                envelope.Add((y + dy) * size + x + dx);
+            bool Fits(Vec2 endpoint)
+            {
+                double reach = width / 2 + .5;
+                for (int y = (int)(endpoint.Y - reach) - 1; y <= endpoint.Y + reach + 1; y++)
+                    for (int x = (int)(endpoint.X - reach) - 1; x <= endpoint.X + reach + 1; x++)
+                    {
+                        var delta = new Vec2(x + .5, y + .5) - endpoint;
+                        if (delta.Dot(dir) <= 0 && delta.LengthSq < reach * reach &&
+                            !envelope.Contains(y * size + x)) return false;
+                    }
+                return true;
+            }
+            Assert.True(Fits(result.P0), "The final outward cap needs source support.");
+            if (move > .001)
+                Assert.False(Fits(result.P0 - dir * .25), "One step less movement must still leave unsupported paint.");
+        }
         else Assert.Equal(a, result.P0);
         Assert.Equal(b, result.P3);
         Assert.Equal(width, strokes[0].Width);
         Assert.True(result.IsLine(.000001));
+    }
+
+    [Theory]
+    [InlineData(1, 0, true)]
+    [InlineData(1, 45, true)]
+    [InlineData(2, 45, true)]
+    [InlineData(2, 90, true)]
+    [InlineData(1, 0, false)]
+    [InlineData(1, 45, false)]
+    [InlineData(2, 45, false)]
+    public void PublicWallAndOpenLinesKeepFiniteAnchors(double scale, double degrees, bool wall)
+    {
+        int size = (int)(300 * scale);
+        var center = new Vec2(size / 2.0, size / 2.0);
+        double angle = degrees * Math.PI / 180;
+        var dir = new Vec2(Math.Cos(angle), Math.Sin(angle));
+        var normal = new Vec2(-dir.Y, dir.X);
+        var image = new RasterImage(size, size);
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                var q = (new Vec2(x + .5, y + .5) - center) * (1 / scale);
+                double u = q.Dot(dir), v = q.Dot(normal);
+                double axial = Math.Clamp(u, 0, 90);
+                bool stem = (u - axial) * (u - axial) + v * v <= 2.25;
+                bool bar = wall && u >= -1 && u <= 6 && Math.Abs(v) <= 40;
+                image.SetPixel(x, y, stem || bar ? new Rgba32(0, 0, 0, 255) : new Rgba32(255, 255, 255, 255));
+            }
+        var doc = Tracer.Trace(image, new TraceOptions { Style = ImageStyle.LineArt }).Document;
+        // Assert the actual editable finite object and both anchors, rather than
+        // accepting any stroke whose paint happens to cover the source.
+        var candidates = doc.Strokes.Where(s => !s.Closed && s.Segments.Count == 1 &&
+            s.Segments[0].IsLine(.05) &&
+            Math.Abs((s.Segments[0].P3 - s.Segments[0].P0).Normalized().Dot(dir)) > .99);
+        var line = candidates.MaxBy(s => (s.Segments[0].P3 - s.Segments[0].P0).Length);
+        Assert.NotNull(line);
+        var segment = line.Segments[0];
+        var a = segment.P0; var b = segment.P3;
+        if ((b - a).Dot(dir) < 0) (a, b) = (b, a);
+        Assert.InRange(Math.Abs((a - center).Dot(normal)), 0, scale);
+        Assert.InRange(Math.Abs((b - center).Dot(normal)), 0, scale);
+        Assert.InRange((a - center).Dot(dir), -2 * scale, 6 * scale);
+        Assert.InRange((b - center).Dot(dir), 88 * scale, 92 * scale);
+        Assert.InRange((b - a).Length, 82 * scale, 94 * scale);
+        var rendered = Rasterizer.Render(doc);
+        var solid = center + dir * (5 * scale) + normal * (20 * scale);
+        if (wall) Assert.True(rendered.GetPixel((int)solid.X, (int)solid.Y).R < 128);
     }
 
     static Vec2 Run(double scale, double degrees, bool crossing, bool gap, bool foreign, bool parallel = false)
