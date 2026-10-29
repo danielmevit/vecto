@@ -532,13 +532,47 @@ def _circle_export(tc, dx, T):
 def _arc_export(ta, dx, T):
     if dx is None:
         return "no_dxf"
-    mid = arc_samples(ta["center"], ta["r_mm"], ta["start_deg"], ta["sweep_deg"], 2)[1]
+    # Match one entire finite open analytic object, never a union of objects or
+    # one conveniently matching segment of a larger polyline.
+    expected = arc_samples(ta["center"], ta["r_mm"], ta["start_deg"], ta["sweep_deg"], 1)
     for p in dx["polylines"]:
-        for a in p["arcs"]:
-            if dist(a["center_mm"], ta["center"]) <= T["circle_center"] and abs(a["r_mm"] - ta["r_mm"]) <= T["circle_radius"] \
-                    and abs(abs(a["sweep_deg"]) - abs(ta["sweep_deg"])) <= TOLERANCES["arc_cover_deg"] \
-                    and point_chords_distance(mid, chords_of(p["points_mm"])) <= T["circle_radius"]:
+        try:
+            arcs = p["arcs"]
+            if (p["closed"] is not False or not arcs or p["straight_segments"] != 0
+                    or p["span_count"] != len(arcs) or not p["constant_width"]):
+                continue
+            values = [p["width_mm"]]
+            for a in arcs:
+                values.extend((*a["center_mm"], a["r_mm"], a["page_sweep_deg"],
+                               *a["start_mm"], *a["end_mm"]))
+            if not all(math.isfinite(v) for v in values):
+                continue
+            if p["width_mm"] <= 0 or abs(p["width_mm"] - ta["width_mm"]) > T["width"]:
+                continue
+            c0, r0 = arcs[0]["center_mm"], arcs[0]["r_mm"]
+            # Co-circularity is a representation invariant, not a raster fit.
+            eps = 1e-6 * max(1.0, r0)
+            if any(a["r_mm"] <= 0 or dist(a["center_mm"], c0) > eps
+                   or abs(a["r_mm"] - r0) > eps
+                   or not 0 < abs(a["page_sweep_deg"]) < 360
+                   or (a["page_sweep_deg"] > 0) != (ta["sweep_deg"] > 0)
+                   for a in arcs):
+                continue
+            if any(dist(a["end_mm"], b["start_mm"]) > eps for a, b in zip(arcs, arcs[1:])):
+                continue
+            sweep = sum(a["page_sweep_deg"] for a in arcs)
+            if (not math.isfinite(sweep) or abs(sweep) >= 360
+                    or abs(sweep - ta["sweep_deg"]) > TOLERANCES["arc_cover_deg"]
+                    or abs(sweep) < TOLERANCES["small_arc_coverage"] * abs(ta["sweep_deg"])):
+                continue
+            if (dist(c0, ta["center"]) <= T["circle_center"]
+                    and abs(r0 - ta["r_mm"]) <= T["circle_radius"]
+                    and dist(arcs[0]["start_mm"], expected[0]) <= T["endpoint"]
+                    and dist(arcs[-1]["end_mm"], expected[-1]) <= T["endpoint"]):
                 return "dxf_bulge_arc"
+        except (KeyError, TypeError, ValueError, IndexError, OverflowError):
+            # Missing additive fields in old JSON are not analytic evidence.
+            continue
     return "not_exported_as_arc"
 
 
