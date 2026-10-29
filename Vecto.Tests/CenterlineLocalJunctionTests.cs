@@ -112,6 +112,45 @@ public class CenterlineLocalJunctionTests
     public void NearParallelForeignComponentDoesNotSnap() =>
         Assert.Equal(new Vec2(150, 156), Run(1, 0, false, false, true, true));
 
+    [Theory]
+    [InlineData(1, 0, true)]
+    [InlineData(2, 37, true)]
+    [InlineData(1, 90, true)]
+    [InlineData(1, 0, false)]
+    [InlineData(2, 37, false)]
+    public void FilledWallFitsRoundCapButOpenLineKeepsEndpoint(double scale, double degrees, bool wall)
+    {
+        const int size = 500;
+        var center = new Vec2(250, 250);
+        double angle = degrees * Math.PI / 180;
+        var dir = new Vec2(Math.Cos(angle), Math.Sin(angle));
+        var normal = new Vec2(-dir.Y, dir.X);
+        var a = center;
+        var b = center + dir * (90 * scale);
+        double width = 8 * scale;
+        var strokes = new List<StrokePath> { new() { Width = width,
+            Segments = [new CubicBezier(a, a + (b - a) * (1.0 / 3), a + (b - a) * (2.0 / 3), b)] } };
+        var comp = Enumerable.Repeat(-1, size * size).ToArray();
+        for (int y = 0; y < size; y++)
+            for (int x = 0; x < size; x++)
+            {
+                var q = new Vec2(x + .5, y + .5) - center;
+                double u = q.Dot(dir) / scale, v = q.Dot(normal) / scale;
+                bool stem = u >= 0 && u <= 90 && Math.Abs(v) <= 4;
+                bool bar = wall && u >= -1 && u <= 12 && Math.Abs(v) <= 40;
+                if (stem || bar) comp[y * size + x] = 1;
+            }
+        var method = typeof(Centerline).GetMethod("RepairLocalJunctions", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var circles = Activator.CreateInstance(method.GetParameters()[1].ParameterType)!;
+        method.Invoke(null, [strokes, circles, new HashSet<int> { 1 }, comp, size, size]);
+        var result = strokes[0].Segments[0];
+        if (wall) Assert.InRange((result.P0 - a).Dot(dir), scale, width / 2);
+        else Assert.Equal(a, result.P0);
+        Assert.Equal(b, result.P3);
+        Assert.Equal(width, strokes[0].Width);
+        Assert.True(result.IsLine(.000001));
+    }
+
     static Vec2 Run(double scale, double degrees, bool crossing, bool gap, bool foreign, bool parallel = false)
     {
         const int w = 400;

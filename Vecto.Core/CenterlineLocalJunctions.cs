@@ -120,6 +120,8 @@ public static partial class Centerline
                     return true;
                 }
                 if (!Wall(1) && !Wall(-1)) return;
+                for (double t = 0; t <= 2 * stroke.Width; t += .5)
+                    if (Id(p + dir * t) != id) return;
                 bool Supported(Vec2 q)
                 {
                     int reach = (int)Math.Ceiling(radius);
