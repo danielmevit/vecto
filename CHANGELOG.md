@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **CAD reference arc checks recognize complete DXF arcs.** The controlled drawing
+  comparison now evaluates an entire bulged polyline, including the same arc traced
+  in reverse, while rejecting malformed, partial or opposite-side curves. This
+  corrects a false export failure in the benchmark; tracing output is unchanged.
 - **Controlled CAD comparison tools.** Developer checks compare saved conversions with
   frozen vector references in physical units, separating editable lines, curves, widths
   and junctions. Regression controls catch missing geometry, incorrect registration and
