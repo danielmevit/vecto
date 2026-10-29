@@ -117,6 +117,23 @@ only as source fill; the backward guard does not guarantee a complete analytic
 arc across this join. A farther probe alone also leaves the intervening
 nonuniform sections unsupported by the current sweep validation.
 
+VEC133 whole-primitive continuation: at a verified tangent end, the arc may
+continue through the merged arc+line band. Up to three circle hypotheses (the
+accepted fit; radial midpoints of the near arc with and without its last
+`sqrt(2 × radius × width)` px, where the coincident side biases sections) each
+get up to three refits that include the far run. The walk along the circle
+(≤90°, ≤4096 half-pixel steps) passes thin coincident sections, then a painted
+band (centreline ±0.4 width inked; radial ink run ≤2.2 × width + 1, each side
+≤2 × width + 1; at most `3 × sqrt(2 × radius × width)` px), and takes the last
+thin centred run before paper; a contaminated tail ≤1 width still ends it. Accept
+only a far run ≥3 × width with ≥2 × width midpoint samples, all near and far
+midpoints within 1.5 px of the refit circle (centre/radius ≤3 px from the
+accepted fit), invented paper ≤1% of the added sweep's band samples, and newly
+explained far ink − 2 × invented ≥ 10 × width. Bridged intervals replace the thin
+section requirement with an inked centreline in sweep validation. Gaps, walls,
+transverse crossings, parallel sides, different radii and tangent stops keep
+fill. Anchors: `RecoverLocalArcs` · `Continue` / `Attempt` / `Walk` / `Painted`.
+
 VEC126 filled-wall cap fitting retains editable finite anchors unless outward
 round-cap paint exceeds a two-pixel same-component source envelope (combined
 raster-boundary and fitted-centerline uncertainty). The tested cap footprint
