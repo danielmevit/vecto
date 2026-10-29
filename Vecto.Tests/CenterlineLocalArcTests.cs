@@ -19,6 +19,17 @@ public class CenterlineLocalArcTests
         {
             var stroke = Assert.Single(doc.Strokes, s => Covers(s, target.Center, target.Start,
                 target.Sweep, radius * scale));
+            var first = stroke.Segments[0].P0 - target.Center;
+            var last = stroke.Segments[^1].P3 - target.Center;
+            double startAngle = Math.Atan2(first.Y, first.X);
+            double endAngle = Math.Atan2(last.Y, last.X);
+            double Error(double a) => Math.Abs(Math.Atan2(Math.Sin(a), Math.Cos(a))) * 180 / Math.PI;
+            Assert.True(Error(startAngle - target.Start) <= 1.5 ||
+                Error(startAngle - target.Start - target.Sweep) <= 1.5,
+                $"Start {startAngle * 180 / Math.PI} target {target.Start * 180 / Math.PI}, end {endAngle * 180 / Math.PI}");
+            Assert.True(Error(endAngle - target.Start) <= 1.5 ||
+                Error(endAngle - target.Start - target.Sweep) <= 1.5,
+                $"End {endAngle * 180 / Math.PI} target {target.Start * 180 / Math.PI}");
             Assert.False(stroke.Closed);
             Assert.InRange(stroke.Width, (width - 2) * scale, (width + 2) * scale);
             Assert.All(stroke.Segments, s => Assert.False(s.IsLine(.05)));

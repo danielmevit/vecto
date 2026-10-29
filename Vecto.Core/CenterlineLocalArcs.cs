@@ -165,7 +165,7 @@ public static partial class Centerline
             strokes.Add(ArcStroke(center, radius, start, sweep, width, ink));
             foreach (var member in members) owned.Add(member);
 
-            double Angle(Vec2 p) => Math.Atan2(p.Y - center.Y, p.X - center.X);
+            double Angle(Vec2 p) => DetMath.Atan2(p.Y - center.Y, p.X - center.X);
             double Trim(double angle, double sign)
             {
                 for (int k = 0; k <= 4 * width; k++)
@@ -185,57 +185,57 @@ public static partial class Centerline
                     if (!Section(next, center, radius, width)) break;
                     grown = next;
                 }
-                // A tangent straight run can support a circle for a few pixels past
-                // the actual join. Locate that join from nearby ungrown line evidence,
-                // using the same endpoint grid rather than scanning unrelated chains.
-                var seen = new HashSet<int>();
+                // A tangent side continues to fill radial sections after the circular
+                // band has ended. Read its remote centreline directly from source:
+                // ridge endpoint buckets can omit the side at this very transition.
+                // The observation length scales with sqrt(radius * width), so a real
+                // circular continuation cannot masquerade as a straight tangent.
+                double reach = Math.Max(6 * width, 3 * Math.Sqrt(radius * width));
                 double? tangentAngle = null;
-                for (double d = 0; d <= 4 * width; d += 4)
+                for (double d = -4 * width; d <= 4 * width; d += 1)
                 {
                     double a = angle + sign * d / radius;
-                    var tip = center + new Vec2(DetMath.Cos(a), DetMath.Sin(a)) * radius;
-                    int bx = (int)tip.X / cell, by = (int)tip.Y / cell;
-                    for (int yy = by - 1; yy <= by + 1; yy++)
-                        for (int xx = bx - 1; xx <= bx + 1; xx++)
-                        {
-                            if (!buckets.TryGetValue((xx, yy), out var entries) || entries.Count > 16) continue;
-                            foreach (var entry in entries)
-                            {
-                                if (!seen.Add(entry.Chain)) continue;
-                                var line = chains[entry.Chain].Pixels;
-                                if (line.Count < minLen || members.Contains(line)) continue;
-                                // Only the endpoint's finite straight prefix matters: an
-                                // outline chain can turn a real corner farther away.
-                                int take = Math.Min(line.Count, Math.Max(minLen, (int)Math.Ceiling(4 * width)));
-                                var prefix = (entry.End ? line.AsEnumerable().Reverse() : line).Take(take).ToList();
-                                double lineWidth = Median(prefix.Select(Width).ToList());
-                                if (Math.Abs(lineWidth - width) > Math.Max(2, width * .2)) continue;
-                                var observed = prefix.Select(Point).ToList();
-                                var mean = observed.Aggregate(new Vec2(), (sum, q) => sum + q) * (1.0 / observed.Count);
-                                double xxSum = 0, yySum = 0, xySum = 0;
-                                foreach (var q in observed)
-                                {
-                                    var v = q - mean;
-                                    xxSum += v.X * v.X; yySum += v.Y * v.Y; xySum += v.X * v.Y;
-                                }
-                                double lineAngle = .5 * Math.Atan2(2 * xySum, xxSum - yySum);
-                                var axis = new Vec2(DetMath.Cos(lineAngle), DetMath.Sin(lineAngle));
-                                if ((observed[^1] - observed[0]).Length < .75 * minLen ||
-                                    observed.Any(q => Math.Abs(Cross(q - mean, axis)) > 1)) continue;
-                                var p0 = mean;
-                                var p1 = observed[0];
-                                var foot = p0 + axis * (center - p0).Dot(axis);
-                                if (Math.Abs((foot - center).Length - radius) > 1.5 ||
-                                    (foot - p1).Length > 4 * width) continue;
-                                double target = angle + Delta(Angle(foot) - angle);
-                                double advance = (target - angle) * sign;
-                                if (advance < 0 || advance * radius > 4 * width ||
-                                    !SupportedSweep(angle, target - angle, center, radius, width)) continue;
-                                if (tangentAngle.HasValue && Math.Abs(target - tangentAngle.Value) * radius > 2)
-                                    return angle; // competing tangent evidence: do not extrapolate
-                                tangentAngle = target;
-                            }
-                        }
+                    var normal = new Vec2(DetMath.Cos(a), DetMath.Sin(a));
+                    var axis = new Vec2(-normal.Y, normal.X) * sign;
+                    var origin = center + normal * radius;
+                    var observed = new List<Vec2>();
+                    for (int k = 0; k <= 16; k++)
+                    {
+                        var p = origin + axis * (reach * (1.0 / 3 + k / 24.0));
+                        if (--budget < 0 || !At(p)) break;
+                        double inside = 0, outside = 0;
+                        while (inside <= width && At(p - normal * inside)) inside += .5;
+                        while (outside <= width && At(p + normal * outside)) outside += .5;
+                        double measured = inside + outside - .5;
+                        if (inside > width || outside > width ||
+                            Math.Abs(measured - width) > Math.Max(2.5, width * .15)) break;
+                        observed.Add(p + normal * ((outside - inside) * .5));
+                    }
+                    if (observed.Count != 17) continue;
+                    var mean = observed.Aggregate(new Vec2(), (sum, q) => sum + q) * (1.0 / observed.Count);
+                    double xxSum = 0, yySum = 0, xySum = 0;
+                    foreach (var q in observed)
+                    {
+                        var v = q - mean;
+                        xxSum += v.X * v.X; yySum += v.Y * v.Y; xySum += v.X * v.Y;
+                    }
+                    double lineAngle = .5 * DetMath.Atan2(2 * xySum, xxSum - yySum);
+                    var fitted = new Vec2(DetMath.Cos(lineAngle), DetMath.Sin(lineAngle));
+                    if (observed.Any(q => Math.Abs(Cross(q - mean, fitted)) > .75)) continue;
+                    var foot = mean + fitted * (center - mean).Dot(fitted);
+                    if (Math.Abs((foot - center).Length - radius) > 1.5) continue;
+                    double target = angle + Delta(Angle(foot) - angle);
+                    if (Math.Abs(target - angle) * radius > 4 * width ||
+                        !SupportedSweep(angle, target - angle, center, radius, width)) continue;
+                    // Require the actual attachment, including the interval before
+                    // the remote fit. Nearby parallel sides and crossings do not join.
+                    bool connected = true;
+                    for (double t = 0; t <= reach; t += .5)
+                        if (--budget < 0 || !At(foot + axis * t)) { connected = false; break; }
+                    if (!connected) continue;
+                    if (tangentAngle.HasValue && Math.Abs(target - tangentAngle.Value) * radius > 2)
+                        return angle; // competing source-supported sides
+                    tangentAngle = target;
                 }
                 return tangentAngle ?? grown;
             }
@@ -284,7 +284,7 @@ public static partial class Centerline
     }
 
     static double Cross(Vec2 a, Vec2 b) => a.X * b.Y - a.Y * b.X;
-    static double Delta(double angle) => Math.Atan2(DetMath.Sin(angle), DetMath.Cos(angle));
+    static double Delta(double angle) => DetMath.Atan2(DetMath.Sin(angle), DetMath.Cos(angle));
 
     static StrokePath ArcStroke(Vec2 center, double radius, double start, double sweep, double width, int ink)
     {
