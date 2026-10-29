@@ -108,7 +108,8 @@ public static partial class Centerline
                 var p = head ? g.P0 : g.P3;
                 var inner = head ? g.P3 : g.P0;
                 double length = (inner - p).Length, radius = stroke.Width / 2;
-                if (length < 8 * stroke.Width) return;
+                if (!double.IsFinite(length) || !double.IsFinite(radius) || radius <= 0 ||
+                    length < 8 * stroke.Width) return;
                 var dir = (inner - p) * (1 / length);
                 var normal = new Vec2(-dir.Y, dir.X);
                 int id = Id(p);
@@ -130,8 +131,16 @@ public static partial class Centerline
                         {
                             var pixel = new Vec2(x + .5, y + .5);
                             var delta = pixel - q;
-                            if (delta.Dot(dir) > 0 || delta.LengthSq >= radius * radius) continue;
-                            if (Id(pixel) != id) return false;
+                            if (delta.Dot(dir) > 0 || delta.LengthSq >= (radius + .5) * (radius + .5)) continue;
+                            // Raster boundary placement and the fitted centerline each carry
+                            // pixel uncertainty. Only paint outside their combined two-pixel
+                            // envelope is evidence for shortening an editable line.
+                            if (Id(pixel) == id) continue;
+                            bool nearby = false;
+                            for (int dy = -2; dy <= 2 && !nearby; dy++)
+                                for (int dx = -2; dx <= 2; dx++)
+                                    if (Id(pixel + new Vec2(dx, dy)) == id) { nearby = true; break; }
+                            if (!nearby) return false;
                         }
                     return true;
                 }
