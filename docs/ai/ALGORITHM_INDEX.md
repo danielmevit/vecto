@@ -105,6 +105,8 @@ line's extra 0.5 px release margin. Anchors: `RecoverLocalArcs`, `ReleaseLocalIn
 VEC122 local curve ownership retains the half-pixel raster release margin in
 curve interiors and closed loops. Beyond an open curved endpoint's tangent
 plane, only the painted half-width round cap releases source ink. Tangent
-recovery targets must advance from the source-supported trimmed seed angle;
-a backward remote foot cannot retract that endpoint. Crossing-contaminated
+recovery targets advance from the source-supported trimmed seed angle unless
+the seed already overruns into the verified straight attachment: backward
+correction requires the overrun centerline to remain in that painted side and
+no distinct circular section four widths beyond the foot. Crossing-contaminated
 sections may retain source fill rather than claim a complete arc.

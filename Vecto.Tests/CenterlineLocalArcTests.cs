@@ -105,6 +105,50 @@ public class CenterlineLocalArcTests
     }
 
     [Fact]
+    public void CurveInteriorOwnershipAvoidsSliversAndPreservesSourceInk()
+    {
+        var f = Make(true, 1, 0, 100, 10);
+        var rendered = Rasterizer.Render(f.Doc);
+        int lost = 0, source = 0;
+        for (int y = 0; y < f.Source.Height; y++)
+            for (int x = 0; x < f.Source.Width; x++)
+                if (f.Source.GetPixel(x, y).R < 128)
+                {
+                    source++;
+                    if (rendered.GetPixel(x, y).R >= 128) lost++;
+                }
+        Assert.InRange(lost / (double)source, 0, .025);
+        // A clean ribbon must not leave one filled region per raster rim pixel.
+        Assert.InRange(f.Doc.Regions.Count, 1, 20);
+    }
+
+    [Theory]
+    [InlineData("backward-foot", 0, 0)]
+    [InlineData("backward-foot", 23, .35)]
+    [InlineData("near-crossing", 0, 0)]
+    [InlineData("near-crossing", 23, .35)]
+    public void CrossingKeepsUnexplainedArcInkWithoutClaimingCompleteTangent(string kind, double rotation, double phase)
+    {
+        var fixture = Make(true, 1, rotation, 100, 10, kind, phase);
+        var target = fixture.Targets[0];
+        // A crossing can split the recoverable ridge. It must not turn the nearby
+        // line's foot into a false tangent endpoint; unexplained ink stays filled.
+        var candidates = fixture.Doc.Strokes.Where(s => !s.Closed && s.Segments.Count > 0 &&
+            s.Segments.All(g => !g.IsLine(.05)) &&
+            s.Segments.SelectMany(g => new[] { g.P0, g.Eval(.5), g.P3 })
+                .All(p => Math.Abs((p - target.Center).Length - 100) < 2)).ToList();
+        Assert.NotEmpty(candidates);
+        // The crossing interrupts uniform cross-sections. Do not invent a
+        // complete tangent-connected arc across that ambiguous interval.
+        Assert.DoesNotContain(candidates, s => Covers(s, target.Center,
+            -Math.PI / 2 + rotation * Math.PI / 180, 3 * Math.PI / 4, 100));
+        double end = 35 * Math.PI / 180 + rotation * Math.PI / 180;
+        var expected = target.Center + new Vec2(Math.Cos(end), Math.Sin(end)) * 100;
+        var rendered = Rasterizer.Render(fixture.Doc);
+        Assert.True(rendered.GetPixel((int)expected.X, (int)expected.Y).R < 128);
+    }
+
+    [Fact]
     public void PrintedCircularGlyphRowDoesNotAddOpenArcs()
     {
         var image = new RasterImage(640, 320);
@@ -160,7 +204,7 @@ public class CenterlineLocalArcTests
         return hits >= 70;
     }
 
-    static (VectorDocument Doc, List<(Vec2 Center, double Start, double Sweep)> Targets, Vec2 Solid)
+    static (VectorDocument Doc, List<(Vec2 Center, double Start, double Sweep)> Targets, Vec2 Solid, RasterImage Source)
         Make(bool corner, double scale, double degrees, double radius, double width, string kind = "", double phase = 0)
     {
         int size = (int)(640 * scale);
@@ -189,6 +233,15 @@ public class CenterlineLocalArcTests
                     ink = (q.X >= 0 && q.Y <= 0 && Math.Abs(q.Length - radius) <= width / 2) ||
                         (p.X >= 150 && p.X <= 320 && Math.Abs(q.Y + radius) <= width / 2) ||
                         (p.Y >= 320 && p.Y <= 500 && Math.Abs(q.X - radius) <= width / 2);
+                    if (kind is "backward-foot" or "near-crossing")
+                    {
+                        double a = Math.Atan2(q.Y, q.X);
+                        double tilt = kind == "near-crossing" ? .10 : 0;
+                        ink = (a >= -Math.PI / 2 && a <= 45 * Math.PI / 180 &&
+                            Math.Abs(q.Length - radius) <= width / 2) ||
+                            (p.X >= 150 && p.X <= 320 && Math.Abs(q.Y + radius) <= width / 2) ||
+                            (p.Y >= 300 && p.Y <= 500 && Math.Abs(q.X - radius - q.Y * tilt) <= width / 2);
+                    }
                     if (kind.StartsWith("open", StringComparison.Ordinal))
                         ink = (q.X >= 0 && q.Y <= 0 &&
                             Math.Abs(q.Length - radius) <= width / 2) ||
@@ -211,7 +264,7 @@ public class CenterlineLocalArcTests
                 ink |= solid || stem;
                 image.SetPixel(x, y, ink ? new Rgba32(0, 0, 0, 255) : new Rgba32(255, 255, 255, 255));
             }
-        return (Tracer.Trace(image, new TraceOptions { Style = ImageStyle.LineArt }).Document, targets, Map(new Vec2(320, 140)));
+        return (Tracer.Trace(image, new TraceOptions { Style = ImageStyle.LineArt }).Document, targets, Map(new Vec2(320, 140)), image);
     }
 
     static T Dxf<T>(string name, params object[] args) =>

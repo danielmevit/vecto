@@ -232,10 +232,33 @@ public static partial class Centerline
                     var foot = mean + fitted * (center - mean).Dot(fitted);
                     if (Math.Abs((foot - center).Length - radius) > 1.5) continue;
                     double target = angle + Delta(Angle(foot) - angle);
-                    // A remote tangent may lie behind a genuine supported arc.
-                    // Growth may correct radial overshoot, but cannot retract the
-                    // source-supported endpoint from which this search started.
-                    if ((target - angle) * sign < 0 || Math.Abs(target - grown) * radius > 4 * width) continue;
+                    if (Math.Abs(target - grown) * radius > 4 * width) continue;
+                    if ((target - angle) * sign < 0)
+                    {
+                        // A ridge can already overrun into the straight attachment.
+                        // A backward correction is safe only while that overrun is
+                        // painted by this same source-supported straight side, and
+                        // no distinct circular continuation exists beyond its band.
+                        if (Section(target + sign * 4 * width / radius, center, radius, width)) continue;
+                        bool redundant = true;
+                        int overlapSteps = (int)Math.Ceiling(Math.Abs(angle - target) * radius * 2);
+                        for (int k = 1; k <= overlapSteps; k++)
+                        {
+                            double a0 = target + (angle - target) * k / overlapSteps;
+                            var point = center + new Vec2(DetMath.Cos(a0), DetMath.Sin(a0)) * radius;
+                            if (Math.Abs(Cross(point - foot, fitted)) > width / 2 || !At(point))
+                            { redundant = false; break; }
+                            var radial = new Vec2(DetMath.Cos(a0), DetMath.Sin(a0));
+                            for (int band = -1; band <= 1; band += 2)
+                            {
+                                var edge = point + radial * (band * width * .4);
+                                if (Math.Abs(Cross(edge - foot, fitted)) > width / 2 + .5 && At(edge))
+                                { redundant = false; break; }
+                            }
+                            if (!redundant) break;
+                        }
+                        if (!redundant) continue;
+                    }
                     if (fitted.Dot(axis) < 0) fitted = fitted * -1;
                     // Require the actual attachment, including the interval before
                     // the remote fit. Nearby parallel sides and crossings do not join.
