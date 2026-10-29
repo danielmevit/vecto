@@ -92,6 +92,59 @@ public static partial class Centerline
                 stroke.Segments[index] = new CubicBezier(a, a + (b - a) * (1.0 / 3), a + (b - a) * (2.0 / 3), b);
             }
         }
+        // A filled wall can own a junction even when no finite target primitive
+        // was recovered. Require long transverse source support, then fit only the
+        // outward half of the round cap to that same component. Released ink is
+        // computed afterwards, so source uncovered by the move remains filled.
+        foreach (var stroke in strokes)
+        {
+            if (stroke.Closed || stroke.Segments.Count != 1) continue;
+            var segment = stroke.Segments[0];
+            if (!segment.IsLine(.05)) continue;
+            FitCap(true); FitCap(false);
+            void FitCap(bool head)
+            {
+                var g = stroke.Segments[0];
+                var p = head ? g.P0 : g.P3;
+                var inner = head ? g.P3 : g.P0;
+                double length = (inner - p).Length, radius = stroke.Width / 2;
+                if (length < 8 * stroke.Width) return;
+                var dir = (inner - p) * (1 / length);
+                var normal = new Vec2(-dir.Y, dir.X);
+                int id = Id(p);
+                if (!local.Contains(id)) return;
+                bool Wall(double sign)
+                {
+                    for (double t = radius + 1; t <= 2 * stroke.Width; t += .5)
+                        if (Id(p + normal * (sign * t)) != id) return false;
+                    return true;
+                }
+                if (!Wall(1) && !Wall(-1)) return;
+                bool Supported(Vec2 q)
+                {
+                    int reach = (int)Math.Ceiling(radius);
+                    for (int y = (int)Math.Floor(q.Y) - reach; y <= (int)Math.Floor(q.Y) + reach; y++)
+                        for (int x = (int)Math.Floor(q.X) - reach; x <= (int)Math.Floor(q.X) + reach; x++)
+                        {
+                            var pixel = new Vec2(x + .5, y + .5);
+                            var delta = pixel - q;
+                            if (delta.Dot(dir) > 0 || delta.LengthSq >= radius * radius) continue;
+                            if (Id(pixel) != id) return false;
+                        }
+                    return true;
+                }
+                if (Supported(p)) return;
+                for (double move = .25; move <= radius; move += .25)
+                {
+                    var q = p + dir * move;
+                    if (Id(q) != id || !Supported(q)) continue;
+                    var a = head ? q : g.P0;
+                    var b = head ? g.P3 : q;
+                    stroke.Segments[0] = new CubicBezier(a, a + (b - a) * (1.0 / 3), a + (b - a) * (2.0 / 3), b);
+                    break;
+                }
+            }
+        }
         int Id(Vec2 p)
         {
             int x = (int)Math.Floor(p.X), y = (int)Math.Floor(p.Y);
