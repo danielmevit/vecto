@@ -149,6 +149,62 @@ public class CenterlineLocalArcTests
         Assert.True(rendered.GetPixel((int)expected.X, (int)expected.Y).R < 128);
     }
 
+    [Theory]
+    [InlineData(78, 0)]
+    public void StraightAttachmentCorrectsRidgeOverrunToItsSourceFoot(double rotation, double phase)
+    {
+        const double radius = 100;
+        var f = Make(true, 1, rotation, radius, 10, "tangent-foot", phase);
+        var center = f.Targets[0].Center;
+        // Before rotation, the source side is x - .1*y = radius*sqrt(1.01).
+        // Its perpendicular foot has angle atan(-.1); the circular source band
+        // ends at that same angle, rather than at the raster ridge's split.
+        double start = -Math.PI / 2 + rotation * Math.PI / 180, sweep = Math.PI / 2 - Math.Atan(.1);
+        var stroke = Assert.Single(f.Doc.Strokes, s => Covers(s, center, start, sweep, radius));
+        double signed = AssertEndpoints(stroke, center, start, sweep, radius, 1);
+        AssertAnalyticExport(f.Doc, stroke, center, radius, signed);
+        var rendered = Rasterizer.Render(f.Doc);
+        int source = 0, lost = 0;
+        for (int y = 0; y < f.Source.Height; y++)
+            for (int x = 0; x < f.Source.Width; x++)
+                if (f.Source.GetPixel(x, y).R < 128)
+                {
+                    source++;
+                    if (rendered.GetPixel(x, y).R >= 128) lost++;
+                }
+        Assert.InRange(lost / (double)source, 0, .025);
+    }
+
+    static void AssertAnalyticExport(VectorDocument doc, StrokePath stroke, Vec2 center, double radius, double signed)
+    {
+        string dxf = DxfWriter.Write(doc);
+        var records = Dxf<List<List<(int Code, string Value)>>>("RecordsIn", dxf, "ENTITIES", "POLYLINE");
+        int matches = 0;
+        for (int i = 0; i < records.Count; i++)
+        {
+            if (Dxf<double>("Num", records[i], 70) != 0) continue;
+            var vertices = Dxf<List<(double X, double Y, double B)>>("Vertices", dxf, i);
+            if (vertices.Count != stroke.Segments.Count + 1) continue;
+            if (vertices.Where((v, j) => (new Vec2(v.X, doc.Height - v.Y) -
+                (j < stroke.Segments.Count ? stroke.Segments[j].P0 : stroke.Segments[^1].P3)).Length > .002).Any()) continue;
+            double sweep = 0;
+            Assert.InRange(Math.Abs(Dxf<double>("Num", records[i], 40) - stroke.Width), 0, .002);
+            for (int j = 0; j < vertices.Count - 1; j++)
+            {
+                var a = vertices[j]; var b = vertices[j + 1];
+                Assert.True(Math.Abs(a.B) > .001);
+                var arc = Dxf<(Vec2 Center, double Radius, double Sweep)>("ArcFromBulge",
+                    new Vec2(a.X, a.Y), new Vec2(b.X, b.Y), a.B);
+                Assert.InRange((arc.Center - new Vec2(center.X, doc.Height - center.Y)).Length, 0, 2);
+                Assert.InRange(Math.Abs(arc.Radius - radius), 0, 2);
+                sweep += arc.Sweep;
+            }
+            Assert.InRange(Math.Abs(sweep + signed), 0, .0001);
+            matches++;
+        }
+        Assert.Equal(1, matches);
+    }
+
     [Fact]
     public void PrintedCircularGlyphRowDoesNotAddOpenArcs()
     {
@@ -234,14 +290,14 @@ public class CenterlineLocalArcTests
                     ink = (q.X >= 0 && q.Y <= 0 && Math.Abs(q.Length - radius) <= width / 2) ||
                         (p.X >= 150 && p.X <= 320 && Math.Abs(q.Y + radius) <= width / 2) ||
                         (p.Y >= 320 && p.Y <= 500 && Math.Abs(q.X - radius) <= width / 2);
-                    if (kind is "backward-foot" or "near-crossing")
+                    if (kind is "backward-foot" or "near-crossing" or "tangent-foot")
                     {
                         double a = Math.Atan2(q.Y, q.X);
-                        double tilt = kind == "near-crossing" ? .10 : 0;
-                        ink = (a >= -Math.PI / 2 && a <= 45 * Math.PI / 180 &&
+                        double tilt = kind is "near-crossing" or "tangent-foot" ? .10 : 0;
+                        ink = (a >= -Math.PI / 2 && a <= (kind == "tangent-foot" ? -Math.Atan(tilt) : 45 * Math.PI / 180) &&
                             Math.Abs(q.Length - radius) <= width / 2) ||
                             (p.X >= 150 && p.X <= 320 && Math.Abs(q.Y + radius) <= width / 2) ||
-                            (p.Y >= 300 && p.Y <= 500 && Math.Abs(q.X - radius - q.Y * tilt) <= width / 2);
+                            (p.Y >= 300 && p.Y <= 500 && Math.Abs(q.X - radius * (kind == "tangent-foot" ? Math.Sqrt(1 + tilt * tilt) : 1) - q.Y * tilt) <= width / 2);
                     }
                     if (kind.StartsWith("open", StringComparison.Ordinal))
                         ink = (q.X >= 0 && q.Y <= 0 &&
