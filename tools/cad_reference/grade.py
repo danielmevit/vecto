@@ -561,7 +561,7 @@ def _arc_export(ta, dx, T):
             if any(dist(a["end_mm"], b["start_mm"]) > eps for a, b in zip(arcs, arcs[1:])):
                 continue
             sweep = sum(a["page_sweep_deg"] for a in arcs)
-            if (not math.isfinite(sweep) or abs(sweep) >= 360
+            if (not math.isfinite(sweep) or abs(sweep) >= 360 - 1e-7
                     or abs(sweep - ta["sweep_deg"]) > TOLERANCES["arc_cover_deg"]
                     or abs(sweep) < TOLERANCES["small_arc_coverage"] * abs(ta["sweep_deg"])):
                 continue

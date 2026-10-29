@@ -117,14 +117,14 @@ def parse_entities(text):
             elif code == 11: cur["x2"] = f
             elif code == 21: cur["y2"] = f
         elif t == "POLYLINE" and poly is not None:
-            if code == 70: poly["closed"] = bool(int(f) & 1) if f is not None and math.isfinite(f) and f == int(f) else None
+            if code == 70: poly["closed"] = bool(int(f) & 1) if f is not None and math.isfinite(f) and 0 <= f <= 32767 and f == int(f) else None
             elif code in (40, 43): poly["width"] = f
         elif t == "VERTEX":
             if code == 10: cur["x"] = f
             elif code == 20: cur["y"] = f
             elif code == 42: cur["bulge"] = f
         elif t == "LWPOLYLINE":
-            if code == 70: cur["closed"] = bool(int(f) & 1) if f is not None and math.isfinite(f) and f == int(f) else None
+            if code == 70: cur["closed"] = bool(int(f) & 1) if f is not None and math.isfinite(f) and 0 <= f <= 32767 and f == int(f) else None
             elif code in (43, 40) and cur["_v"] is None: cur["width"] = f
             elif code == 10:
                 if cur["_v"] is not None:

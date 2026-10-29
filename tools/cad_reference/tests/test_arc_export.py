@@ -63,6 +63,7 @@ class ArcExportContracts(unittest.TestCase):
             'half_sweep': polyline(sweep=90, pieces=1),
             'long_sweep': polyline(sweep=270, pieces=3),
             'opposite_direction': polyline(sweep=-180),
+            'complete_reversed_traversal': polyline(start=180, sweep=-180),
             'wrong_placement': polyline(start=90),
             'nearby': polyline(center=(32, 30)),
             'wrong_radius': polyline(radius=12),
@@ -70,11 +71,22 @@ class ArcExportContracts(unittest.TestCase):
             'missing_width': polyline(width=0),
             'closed_arc': polyline(closed=True),
             'open_full_circle': polyline(sweep=360, pieces=4),
+            'open_six_piece_circle': polyline(sweep=360, pieces=6),
+            'multiple_turns': polyline(sweep=720, pieces=8),
             'closed_full_circle': polyline(sweep=360, pieces=4, closed=True),
         }
         for name, text in cases.items():
             with self.subTest(name=name):
                 self.assertEqual(self.exported(None, text), 'not_exported_as_arc')
+
+    def test_wrong_circle_in_actual_dxf_is_rejected(self):
+        text = polyline()
+        bulge = str(-math.tan(math.radians(90) / 4))
+        # The first span is correct; the other has the same shared endpoint but
+        # a different analytic circle. A matching segment must not rescue it.
+        pos = text.rfind('42\n' + bulge)
+        text = text[:pos] + text[pos:].replace(bulge, '-0.5', 1)
+        self.assertEqual(self.exported(None, text), 'not_exported_as_arc')
 
     def test_separate_objects_never_joined(self):
         self.assertEqual(self.exported(None, polyline(0, 90, 1), polyline(90, 90, 1)),
@@ -105,7 +117,7 @@ class ArcExportContracts(unittest.TestCase):
             self.assertEqual(_arc_export(truth(), bad, tolerances_for(0.1)), 'not_exported_as_arc')
 
     def test_nonfinite_malformed_values_fail_closed(self):
-        for token in ('nan', 'inf', '-inf', 'garbage'):
+        for token in ('nan', 'inf', '-inf', 'garbage', '1e308'):
             for old in ('10\n40.0', '20\n70.0', '42\n-0.41421356237309503', '40\n0.7', '70\n0'):
                 text = polyline().replace(old, old.split('\n')[0] + '\n' + token, 1)
                 with self.subTest(token=token, field=old):
