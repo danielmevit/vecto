@@ -27,6 +27,9 @@ public static partial class Centerline
             }
         }
         int candidates = 0, budget = maxSamples;
+        // Angular intervals where a whole-primitive continuation crosses a merged
+        // arc/line band. Inside them a thin radial section is not expected.
+        var bridges = new List<(double Lo, double Hi)>();
         foreach (var (seed, closed) in chains.OrderByDescending(c => c.Pixels.Count))
         {
             if (closed || owned.Contains(seed) || seed.Count < 24 || seed.Count > 4096 || candidates++ >= maxCandidates) continue;
@@ -152,6 +155,9 @@ public static partial class Centerline
             start = Trim(start, direction); end = Trim(end, -direction);
             bool startTangent = false, endTangent = false;
             start = Grow(start, -direction, out startTangent); end = Grow(end, direction, out endTangent);
+            bridges.Clear();
+            if (startTangent) start = Continue(start, -direction, ref startTangent, ref end);
+            if (endTangent) end = Continue(end, direction, ref endTangent, ref start);
             double sweep = end - start;
             if (Math.Abs(sweep) < Math.PI / 3 || Math.Abs(sweep) > Math.PI * 1.9 ||
                 radius * Math.Abs(sweep) < minLen || !SupportedSweep(start, sweep, center, radius, width, startTangent, endTangent)) continue;
@@ -160,6 +166,7 @@ public static partial class Centerline
             for (int k = 0; k <= sections; k++)
             {
                 double value = MeasureSection(start + sweep * k / sections, center, radius, width);
+                if (value <= 0 && InBridge(start + sweep * k / sections)) continue;
                 if (value <= 0 && ((startTangent && k * radius * Math.Abs(sweep) / sections <= width) ||
                     (endTangent && (sections - k) * radius * Math.Abs(sweep) / sections <= width))) continue;
                 measuredWidths.Add(value);
@@ -172,6 +179,156 @@ public static partial class Centerline
             foreach (var member in members) owned.Add(member);
 
             double Angle(Vec2 p) => DetMath.Atan2(p.Y - center.Y, p.X - center.X);
+            // A near-tangent straight side paints over the circular band, so radial
+            // sections there are thick and Grow stops at the line's foot. Explain that
+            // band as a union: one longer arc plus the straight side. Continue only if
+            // (1) the band is painted along the arc centreline and is no wider than the
+            // two side-by-side primitives, (2) a thin, centred circular run of the same
+            // centre, radius and width resumes beyond it, and (3) the longer arc newly
+            // explains that far-side ink while inventing almost no paper. Gaps, walls,
+            // transverse crossings and tangent stops fail one of these and stay fill.
+            double Continue(double angle, double sign, ref bool tangent, ref double other)
+            {
+                // A bounded set of circle hypotheses: the accepted fit, and unbiased radial
+                // midpoints of the observed near arc with and without its foot, where the
+                // coincident straight side biases sections outward.
+                var hypotheses = new List<(Vec2 Center, double Radius)> { (center, radius) };
+                double length = Math.Abs(angle - other) * radius;
+                foreach (double margin in new[] { 0, Math.Sqrt(2 * radius * width) })
+                {
+                    var near = new List<Vec2>();
+                    for (double t = margin > 0 ? width : 0; t <= length - margin; t += 1)
+                    {
+                        double a = other + (angle - other) * t / Math.Max(1, length);
+                        if (MeasureArcSection(a, center, radius, width, out double shift) > 0)
+                            near.Add(center + new Vec2(DetMath.Cos(a), DetMath.Sin(a)) * (radius + shift));
+                    }
+                    if (near.Count >= 24 && Fit(near, out var nearCenter, out double nearRadius) &&
+                        (nearCenter - center).Length <= 3 && Math.Abs(nearRadius - radius) <= 3)
+                        hypotheses.Add((nearCenter, nearRadius));
+                }
+                foreach (var hypothesis in hypotheses)
+                {
+                    double result = Attempt(hypothesis.Center, hypothesis.Radius, angle, sign, ref tangent, ref other);
+                    if (result != angle) return result;
+                }
+                return angle;
+            }
+            double Attempt(Vec2 c, double r, double angle, double sign, ref bool tangent, ref double other)
+            {
+                // Two short refits: a partial-circle fit drifts away from its observed
+                // span, so confirm the far run against a fit that includes it.
+                for (int pass = 0; pass < 3; pass++)
+                {
+                    var (thick, farStart, farEnd, inRun) = Walk(c, r, angle, sign, other);
+                    if (thick < 2 || !inRun) return angle;
+                    double farLength = Math.Abs(farEnd - farStart) * r;
+                    var observed = new List<Vec2>();
+                    var farObserved = new List<Vec2>();
+                    double nearLength = Math.Abs(angle - other) * r;
+                    for (double t = 0; t <= nearLength; t += 1)
+                        AddMiddle(other + (angle - other) * t / Math.Max(1, nearLength), observed);
+                    for (double t = 0; t <= farLength; t += 1)
+                        AddMiddle(farStart + sign * t / r, farObserved);
+                    void AddMiddle(double a, List<Vec2> into)
+                    {
+                        double value = MeasureArcSection(a, c, r, width, out double shift);
+                        if (value > 0) into.Add(c + new Vec2(DetMath.Cos(a), DetMath.Sin(a)) * (r + shift));
+                    }
+                    if (farObserved.Count < 2 || observed.Count < 24) return angle;
+                    if (!Fit(observed.Concat(farObserved).ToList(), out var refit, out double refitRadius) ||
+                        (refit - center).Length > 3 || Math.Abs(refitRadius - radius) > 3) return angle;
+                    bool settled = (refit - c).Length <= .25 && Math.Abs(refitRadius - r) <= .25;
+                    if (!settled && pass < 2) { c = refit; r = refitRadius; continue; }
+                    if (farLength < 3 * width || farObserved.Count < 2 * width) return angle;
+                    // The far run must be this circle, not a parallel or offset band.
+                    if (farObserved.Any(q => Math.Abs((q - c).Length - r) > 1.5) ||
+                        observed.Any(q => Math.Abs((q - c).Length - r) > 1.5)) return angle;
+                    // Union score against source ink over the whole added sweep: the
+                    // continuing arc must newly explain far ink while inventing no paper.
+                    int samples = 0, invented = 0, explained = 0;
+                    double total = Math.Abs(farEnd - angle) * r, half = Math.Max(.5, width / 2 - 1);
+                    double bridgeLength = Math.Abs(farStart - angle) * r;
+                    for (double t = 0; t <= total; t += .5)
+                    {
+                        double a = angle + sign * t / r;
+                        var n = new Vec2(DetMath.Cos(a), DetMath.Sin(a));
+                        for (double o = -half; o <= half; o += 1)
+                        {
+                            if (--budget < 0) return angle;
+                            samples++;
+                            if (!At(c + n * (r + o))) invented++;
+                            else if (t >= bridgeLength) explained++;
+                        }
+                    }
+                    if (invented > samples * .01 || explained - 2 * invented < 10 * width) return angle;
+                    // Walk angles are already in the confirmed circle's frame; re-express
+                    // this tip, the opposite endpoint and earlier bridges in it too.
+                    var otherPoint = center + new Vec2(DetMath.Cos(other), DetMath.Sin(other)) * radius;
+                    var anglePoint = center + new Vec2(DetMath.Cos(angle), DetMath.Sin(angle)) * radius;
+                    double newAngle = DetMath.Atan2(anglePoint.Y - c.Y, anglePoint.X - c.X);
+                    newAngle = angle + Delta(newAngle - angle);
+                    double newOther = DetMath.Atan2(otherPoint.Y - c.Y, otherPoint.X - c.X);
+                    newOther = other + Delta(newOther - other);
+                    for (int b = 0; b < bridges.Count; b++)
+                        bridges[b] = (bridges[b].Lo + Delta(Shifted(bridges[b].Lo) - bridges[b].Lo),
+                            bridges[b].Hi + Delta(Shifted(bridges[b].Hi) - bridges[b].Hi));
+                    double Shifted(double a)
+                    {
+                        var q = center + new Vec2(DetMath.Cos(a), DetMath.Sin(a)) * radius;
+                        return DetMath.Atan2(q.Y - c.Y, q.X - c.X);
+                    }
+                    center = c; radius = r; other = newOther;
+                    bridges.Add((Math.Min(newAngle, farStart), Math.Max(newAngle, farStart)));
+                    tangent = false;
+                    return farEnd;
+                }
+                return angle;
+            }
+            // At the foot the two bands coincide and sections are still thin; the merged
+            // band thickens as the straight side departs from the circle. Raster phase can
+            // open a brief thin window inside that band, so the far run is the last thin
+            // run before paper or the walk bound.
+            (int Thick, double FarStart, double FarEnd, bool InRun) Walk(Vec2 c, double r, double angle, double sign, double other)
+            {
+                int maxBand = (int)Math.Ceiling(3 * Math.Sqrt(2 * r * width) / .5);
+                double room = Math.PI * 1.85 - Math.Abs(angle - other);
+                int maxSteps = (int)Math.Min(Math.Ceiling(Math.Min(Math.PI / 2, room) * r / .5), 4096);
+                int thick = 0, after = 0;
+                double farStart = angle, farEnd = angle, step = .5 / r;
+                bool inRun = false;
+                for (int k = 1; k <= maxSteps; k++)
+                {
+                    double next = angle + sign * step * k;
+                    if (Section(next, c, r, width))
+                    {
+                        if (thick == 0) continue;
+                        if (!inRun || after > 0) { farStart = next; inRun = true; after = 0; }
+                        farEnd = next;
+                        continue;
+                    }
+                    if (!Painted(next, c, r))
+                        break;
+                    if (++thick > maxBand) { inRun = false; break; }
+                    if (inRun) after++;
+                }
+                // A short contaminated tail (an end cap or touching fill) still ends the
+                // run; a long one means the run was only a window inside the band.
+                if (after * .5 > width) inRun = false;
+                return (thick, farStart, farEnd, inRun);
+            }
+            bool Painted(double a, Vec2 c, double r)
+            {
+                var n = new Vec2(DetMath.Cos(a), DetMath.Sin(a));
+                var p = c + n * r;
+                for (int band = -2; band <= 2; band++)
+                    if (!At(p + n * (band * width * .2))) return false;
+                double inside = 0, outside = 0, limit = 2 * width + 1;
+                while (inside <= limit && At(p - n * inside)) inside += .5;
+                while (outside <= limit && At(p + n * outside)) outside += .5;
+                budget -= (int)((inside + outside) * 2);
+                return inside <= limit && outside <= limit && inside + outside - .5 <= 2.2 * width + 1;
+            }
             double Trim(double angle, double sign)
             {
                 for (int k = 0; k <= 4 * width; k++)
@@ -281,6 +438,7 @@ public static partial class Centerline
         }
         return owned;
 
+        bool InBridge(double a) => bridges.Any(b => a >= b.Lo - 1e-9 && a <= b.Hi + 1e-9);
         bool Uniform(List<int> run, double width)
         {
             if (run.Count == 0) return false;
@@ -320,6 +478,11 @@ public static partial class Centerline
             {
                 double a = start + sweep * k / Math.Max(1, steps);
                 if (Section(a, center, radius, width)) continue;
+                if (InBridge(a))
+                {
+                    if (--budget < 0 || !At(center + new Vec2(DetMath.Cos(a), DetMath.Sin(a)) * radius)) return false;
+                    continue;
+                }
                 if (!((startTangent && k * .5 <= width) || (endTangent && (steps - k) * .5 <= width))) return false;
                 var n = new Vec2(DetMath.Cos(a), DetMath.Sin(a));
                 for (int band = -1; band <= 1; band++)
