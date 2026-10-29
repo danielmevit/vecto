@@ -109,7 +109,13 @@ recovery targets advance from the source-supported trimmed seed angle unless
 the seed already overruns into the verified straight attachment: backward
 correction requires the overrun centerline to remain in that painted side and
 no distinct circular section four widths beyond the foot. Crossing-contaminated
-sections may retain source fill rather than claim a complete arc.
+sections may retain source fill rather than claim a complete arc. The four-width
+probe is a local heuristic: a genuine circular continuation can still overlap
+the straight band at that distance, so a failed uniform section does not prove
+that the circle ends at the fitted foot. Such continuation can remain editable
+only as source fill; the backward guard does not guarantee a complete analytic
+arc across this join. A farther probe alone also leaves the intervening
+nonuniform sections unsupported by the current sweep validation.
 
 VEC126 filled-wall cap fitting retains editable finite anchors unless outward
 round-cap paint exceeds a two-pixel same-component source envelope (combined
