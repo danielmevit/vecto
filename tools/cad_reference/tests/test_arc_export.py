@@ -48,6 +48,34 @@ class ArcExportContracts(unittest.TestCase):
                     self.assertEqual(self.exported(truth(start, sweep), polyline(start, sweep, pieces, kind=kind)),
                                      'dxf_bulge_arc')
 
+    def test_forward_and_reverse_traversals_have_same_export(self):
+        for kind in ('POLYLINE', 'LWPOLYLINE'):
+            for start, sweep, pieces in ((30, 90, 1), (0, 180, 2),
+                                         (90, -180, 3), (5, 270, 3)):
+                for reverse in (False, True):
+                    with self.subTest(kind=kind, sweep=sweep, reverse=reverse):
+                        rendered = polyline(start + sweep if reverse else start,
+                                            -sweep if reverse else sweep, pieces, kind=kind)
+                        self.assertEqual(self.exported(truth(start, sweep), rendered), 'dxf_bulge_arc')
+
+    def test_endpoint_swap_requires_sweep_reversal(self):
+        # The same unordered endpoints on the opposite half-circle must fail.
+        for start, sweep in ((0, -180), (180, 180)):
+            self.assertEqual(self.exported(None, polyline(start, sweep)), 'not_exported_as_arc')
+        bad = parse(polyline())
+        arcs = bad['polylines'][0]['arcs']
+        arcs[0]['start_mm'], arcs[-1]['end_mm'] = arcs[-1]['end_mm'], arcs[0]['start_mm']
+        self.assertEqual(_arc_export(truth(), bad, tolerances_for(0.1)), 'not_exported_as_arc')
+
+    def test_near_loop_and_close_wrong_geometry_rejected(self):
+        for rendered in (polyline(sweep=359.99, pieces=4),
+                         polyline(center=(30.56, 30)), polyline(radius=10.56)):
+            self.assertEqual(self.exported(None, rendered), 'not_exported_as_arc')
+        # Even when endpoint tolerances encompass a tiny circle, its opposite
+        # midpoint lies on the wrong side and cannot be accepted.
+        self.assertEqual(self.exported(truth(radius=0.1), polyline(sweep=-180, radius=0.1)),
+                         'not_exported_as_arc')
+
     def test_registered_endpoints_and_legacy_sweep_are_additive(self):
         out = parse(polyline())['polylines'][0]
         self.assertEqual(out['span_count'], 2)
@@ -63,7 +91,6 @@ class ArcExportContracts(unittest.TestCase):
             'half_sweep': polyline(sweep=90, pieces=1),
             'long_sweep': polyline(sweep=270, pieces=3),
             'opposite_direction': polyline(sweep=-180),
-            'complete_reversed_traversal': polyline(start=180, sweep=-180),
             'wrong_placement': polyline(start=90),
             'nearby': polyline(center=(32, 30)),
             'wrong_radius': polyline(radius=12),

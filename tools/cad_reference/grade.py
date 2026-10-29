@@ -534,7 +534,7 @@ def _arc_export(ta, dx, T):
         return "no_dxf"
     # Match one entire finite open analytic object, never a union of objects or
     # one conveniently matching segment of a larger polyline.
-    expected = arc_samples(ta["center"], ta["r_mm"], ta["start_deg"], ta["sweep_deg"], 1)
+    expected = arc_samples(ta["center"], ta["r_mm"], ta["start_deg"], ta["sweep_deg"], 2)
     for p in dx["polylines"]:
         try:
             arcs = p["arcs"]
@@ -555,20 +555,32 @@ def _arc_export(ta, dx, T):
             if any(a["r_mm"] <= 0 or dist(a["center_mm"], c0) > eps
                    or abs(a["r_mm"] - r0) > eps
                    or not 0 < abs(a["page_sweep_deg"]) < 360
-                   or (a["page_sweep_deg"] > 0) != (ta["sweep_deg"] > 0)
+                   or (a["page_sweep_deg"] > 0) != (arcs[0]["page_sweep_deg"] > 0)
                    for a in arcs):
                 continue
             if any(dist(a["end_mm"], b["start_mm"]) > eps for a, b in zip(arcs, arcs[1:])):
                 continue
             sweep = sum(a["page_sweep_deg"] for a in arcs)
             if (not math.isfinite(sweep) or abs(sweep) >= 360 - 1e-7
-                    or abs(sweep - ta["sweep_deg"]) > TOLERANCES["arc_cover_deg"]
+                    or abs(abs(sweep) - abs(ta["sweep_deg"])) > TOLERANCES["arc_cover_deg"]
                     or abs(sweep) < TOLERANCES["small_arc_coverage"] * abs(ta["sweep_deg"])):
                 continue
+            # Reversing traversal swaps both endpoints and the sweep sign.
+            # The halfway locus remains unchanged and disambiguates the other
+            # semicircle, whose unordered endpoints are identical.
+            forward = (sweep > 0) == (ta["sweep_deg"] > 0)
+            start, end = (expected[0], expected[-1]) if forward else (expected[-1], expected[0])
+            start_point = arcs[0]["start_mm"]
+            start_angle = math.degrees(math.atan2(start_point[1] - c0[1], start_point[0] - c0[0]))
+            midpoint = arc_samples(c0, r0, start_angle, sweep, 2)[1]
+            intended = (expected[1][0] - ta["center"][0], expected[1][1] - ta["center"][1])
+            actual = (midpoint[0] - c0[0], midpoint[1] - c0[1])
             if (dist(c0, ta["center"]) <= T["circle_center"]
                     and abs(r0 - ta["r_mm"]) <= T["circle_radius"]
-                    and dist(arcs[0]["start_mm"], expected[0]) <= T["endpoint"]
-                    and dist(arcs[-1]["end_mm"], expected[-1]) <= T["endpoint"]):
+                    and dist(arcs[0]["start_mm"], start) <= T["endpoint"]
+                    and dist(arcs[-1]["end_mm"], end) <= T["endpoint"]
+                    and dist(midpoint, expected[1]) <= T["endpoint"]
+                    and actual[0] * intended[0] + actual[1] * intended[1] > 0):
                 return "dxf_bulge_arc"
         except (KeyError, TypeError, ValueError, IndexError, OverflowError):
             # Missing additive fields in old JSON are not analytic evidence.
