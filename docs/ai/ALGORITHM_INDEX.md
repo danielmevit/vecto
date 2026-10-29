@@ -90,3 +90,14 @@ line/circle bands may shorten finite local line endpoints to their centerline.
 Original component cross-sections and the complete removed centerline interval
 must support the join; parallel, foreign, unsupported and crossing ends stay.
 Accepted circle proposals retain their measured geometry and source identity.
+
+Local analytic arc endpoints use source tangent-side cross-sections beyond the join,
+with observation reach `max(6 × width, 3 × sqrt(radius × width))`. At least 12 of
+17 sections must fit a straight centreline (0.75 px residual); isolated remote
+branch sections may be omitted, but the attachment must contain continuous source
+ink. Tangent estimates require a coherent central population (interquartile spread
+≤2 px along the circle). Only a verified tangent permits a width-long endpoint
+section contaminated by the attachment; interior gaps retain the strict section
+check. Output angles use DetMath. Final curved ownership releases only the painted
+half-width, retaining boundary source ink as fill instead of using the straight
+line's extra 0.5 px release margin. Anchors: `RecoverLocalArcs`, `ReleaseLocalInk`.

@@ -420,9 +420,12 @@ public static partial class Centerline
         if (local.Count == 0) return;
         foreach (var stroke in strokes)
         {
-            double r = stroke.Width / 2 + 0.5, r2 = r * r;
             foreach (var seg in stroke.Segments)
             {
+                // Curved joins can be trimmed after fitting. Keep boundary source
+                // pixels as fill unless the final curve actually paints them; the
+                // line ownership margin would release ink outside the curved band.
+                double r = stroke.Width / 2 + (seg.IsLine(0.02) ? 0.5 : 0), r2 = r * r;
                 double lengthBound = (seg.P1 - seg.P0).Length + (seg.P2 - seg.P1).Length + (seg.P3 - seg.P2).Length;
                 int steps = seg.IsLine(0.02) ? 1 : Math.Max(1, (int)Math.Ceiling(lengthBound * 2));
                 var a = seg.P0;

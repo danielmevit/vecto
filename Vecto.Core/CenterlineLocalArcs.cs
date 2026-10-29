@@ -150,14 +150,20 @@ public static partial class Centerline
             // A true branch may contaminate a few endpoint cross-sections. Stop on
             // its thin side; the unrepresented junction ink remains source fill.
             start = Trim(start, direction); end = Trim(end, -direction);
-            start = Grow(start, -direction); end = Grow(end, direction);
+            bool startTangent = false, endTangent = false;
+            start = Grow(start, -direction, out startTangent); end = Grow(end, direction, out endTangent);
             double sweep = end - start;
             if (Math.Abs(sweep) < Math.PI / 3 || Math.Abs(sweep) > Math.PI * 1.9 ||
-                radius * Math.Abs(sweep) < minLen || !SupportedSweep(start, sweep, center, radius, width)) continue;
+                radius * Math.Abs(sweep) < minLen || !SupportedSweep(start, sweep, center, radius, width, startTangent, endTangent)) continue;
             var measuredWidths = new List<double>();
             int sections = (int)Math.Ceiling(radius * Math.Abs(sweep));
             for (int k = 0; k <= sections; k++)
-                measuredWidths.Add(MeasureSection(start + sweep * k / sections, center, radius, width));
+            {
+                double value = MeasureSection(start + sweep * k / sections, center, radius, width);
+                if (value <= 0 && ((startTangent && k * radius * Math.Abs(sweep) / sections <= width) ||
+                    (endTangent && (sections - k) * radius * Math.Abs(sweep) / sections <= width))) continue;
+                measuredWidths.Add(value);
+            }
             if (measuredWidths.Any(value => value <= 0)) continue;
             double measuredWidth = Median(measuredWidths);
             if (measuredWidth > thin || Math.Abs(measuredWidth - width) > Math.Max(2, width * .15)) continue;
@@ -175,8 +181,9 @@ public static partial class Centerline
                 }
                 return angle;
             }
-            double Grow(double angle, double sign)
+            double Grow(double angle, double sign, out bool tangent)
             {
+                tangent = false;
                 double grown = angle;
                 int count = (int)Math.Ceiling(4 * width / .5);
                 for (int k = 1; k <= count; k++)
@@ -191,10 +198,10 @@ public static partial class Centerline
                 // The observation length scales with sqrt(radius * width), so a real
                 // circular continuation cannot masquerade as a straight tangent.
                 double reach = Math.Max(6 * width, 3 * Math.Sqrt(radius * width));
-                double? tangentAngle = null;
+                var tangentAngles = new List<double>();
                 for (double d = -4 * width; d <= 4 * width; d += 1)
                 {
-                    double a = angle + sign * d / radius;
+                    double a = grown + sign * d / radius;
                     var normal = new Vec2(DetMath.Cos(a), DetMath.Sin(a));
                     var axis = new Vec2(-normal.Y, normal.X) * sign;
                     var origin = center + normal * radius;
@@ -208,10 +215,10 @@ public static partial class Centerline
                         while (outside <= width && At(p + normal * outside)) outside += .5;
                         double measured = inside + outside - .5;
                         if (inside > width || outside > width ||
-                            Math.Abs(measured - width) > Math.Max(2.5, width * .15)) break;
+                            Math.Abs(measured - width) > Math.Max(2.5, width * .15)) continue;
                         observed.Add(p + normal * ((outside - inside) * .5));
                     }
-                    if (observed.Count != 17) continue;
+                    if (observed.Count < 12 || (observed[^1] - observed[0]).Length < reach * .5) continue;
                     var mean = observed.Aggregate(new Vec2(), (sum, q) => sum + q) * (1.0 / observed.Count);
                     double xxSum = 0, yySum = 0, xySum = 0;
                     foreach (var q in observed)
@@ -225,19 +232,25 @@ public static partial class Centerline
                     var foot = mean + fitted * (center - mean).Dot(fitted);
                     if (Math.Abs((foot - center).Length - radius) > 1.5) continue;
                     double target = angle + Delta(Angle(foot) - angle);
-                    if (Math.Abs(target - angle) * radius > 4 * width ||
-                        !SupportedSweep(angle, target - angle, center, radius, width)) continue;
+                    if (Math.Abs(target - grown) * radius > 4 * width) continue;
+                    if (fitted.Dot(axis) < 0) fitted = fitted * -1;
                     // Require the actual attachment, including the interval before
                     // the remote fit. Nearby parallel sides and crossings do not join.
                     bool connected = true;
                     for (double t = 0; t <= reach; t += .5)
-                        if (--budget < 0 || !At(foot + axis * t)) { connected = false; break; }
+                        if (--budget < 0 || !At(foot + fitted * t)) { connected = false; break; }
+                    if (!SupportedSweep(angle, target - angle, center, radius, width, false, true)) connected = false;
                     if (!connected) continue;
-                    if (tangentAngle.HasValue && Math.Abs(target - tangentAngle.Value) * radius > 2)
-                        return angle; // competing source-supported sides
-                    tangentAngle = target;
+                    tangentAngles.Add(target);
                 }
-                return tangentAngle ?? grown;
+                if (tangentAngles.Count == 0) return grown;
+                tangentAngles.Sort();
+                // Raster phase changes individual cross-section fits. Require a
+                // coherent central population; competing tangent branches stay ambiguous.
+                if ((tangentAngles[tangentAngles.Count * 3 / 4] - tangentAngles[tangentAngles.Count / 4]) * radius > 2)
+                    return angle;
+                tangent = true;
+                return Median(tangentAngles);
             }
         }
         return owned;
@@ -273,12 +286,19 @@ public static partial class Centerline
             return inside <= width && outside <= width && Math.Abs(inside - outside) <= 3 &&
                 Math.Abs(measured - width) <= Math.Max(2.5, width * .15) ? measured : 0;
         }
-        bool SupportedSweep(double start, double sweep, Vec2 center, double radius, double width)
+        bool SupportedSweep(double start, double sweep, Vec2 center, double radius, double width, bool startTangent = false, bool endTangent = false)
         {
             int steps = (int)Math.Ceiling(Math.Abs(sweep) * radius * 2);
             if (steps > 4096 || steps > budget) return false;
             for (int k = 0; k <= steps; k++)
-                if (!Section(start + sweep * k / Math.Max(1, steps), center, radius, width)) return false;
+            {
+                double a = start + sweep * k / Math.Max(1, steps);
+                if (Section(a, center, radius, width)) continue;
+                if (!((startTangent && k * .5 <= width) || (endTangent && (steps - k) * .5 <= width))) return false;
+                var n = new Vec2(DetMath.Cos(a), DetMath.Sin(a));
+                for (int band = -1; band <= 1; band++)
+                    if (--budget < 0 || !At(center + n * (radius + band * width * .25))) return false;
+            }
             return true;
         }
     }
