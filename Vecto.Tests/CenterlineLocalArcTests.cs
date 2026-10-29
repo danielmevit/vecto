@@ -120,6 +120,7 @@ public class CenterlineLocalArcTests
         Assert.InRange(lost / (double)source, 0, .025);
         // A clean ribbon must not leave one filled region per raster rim pixel.
         Assert.InRange(f.Doc.Regions.Count, 1, 20);
+        Assert.DoesNotMatch(@"M ([\d.]+) ([\d.]+) L \1 \2 Z", SvgWriter.Write(f.Doc));
     }
 
     [Theory]
