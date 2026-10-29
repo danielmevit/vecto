@@ -101,3 +101,10 @@ section contaminated by the attachment; interior gaps retain the strict section
 check. Output angles use DetMath. Final curved ownership releases only the painted
 half-width, retaining boundary source ink as fill instead of using the straight
 line's extra 0.5 px release margin. Anchors: `RecoverLocalArcs`, `ReleaseLocalInk`.
+
+VEC122 local curve ownership retains the half-pixel raster release margin in
+curve interiors and closed loops. Beyond an open curved endpoint's tangent
+plane, only the painted half-width round cap releases source ink. Tangent
+recovery targets must advance from the source-supported trimmed seed angle;
+a backward remote foot cannot retract that endpoint. Crossing-contaminated
+sections may retain source fill rather than claim a complete arc.

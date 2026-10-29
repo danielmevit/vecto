@@ -232,7 +232,10 @@ public static partial class Centerline
                     var foot = mean + fitted * (center - mean).Dot(fitted);
                     if (Math.Abs((foot - center).Length - radius) > 1.5) continue;
                     double target = angle + Delta(Angle(foot) - angle);
-                    if (Math.Abs(target - grown) * radius > 4 * width) continue;
+                    // A remote tangent may lie behind a genuine supported arc.
+                    // Growth may correct radial overshoot, but cannot retract the
+                    // source-supported endpoint from which this search started.
+                    if ((target - angle) * sign < 0 || Math.Abs(target - grown) * radius > 4 * width) continue;
                     if (fitted.Dot(axis) < 0) fitted = fitted * -1;
                     // Require the actual attachment, including the interval before
                     // the remote fit. Nearby parallel sides and crossings do not join.

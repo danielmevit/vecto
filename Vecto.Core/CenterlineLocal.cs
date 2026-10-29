@@ -422,10 +422,13 @@ public static partial class Centerline
         {
             foreach (var seg in stroke.Segments)
             {
-                // Curved joins can be trimmed after fitting. Keep boundary source
-                // pixels as fill unless the final curve actually paints them; the
-                // line ownership margin would release ink outside the curved band.
-                double r = stroke.Width / 2 + (seg.IsLine(0.02) ? 0.5 : 0), r2 = r * r;
+                // Retain the raster ownership margin along curve interiors. At an
+                // open curved end, pixels beyond the endpoint's tangent plane must
+                // lie inside the painted round cap rather than its release margin.
+                double r = stroke.Width / 2 + 0.5, r2 = r * r;
+                bool curved = !seg.IsLine(0.02);
+                bool first = !stroke.Closed && seg.Equals(stroke.Segments[0]);
+                bool last = !stroke.Closed && seg.Equals(stroke.Segments[^1]);
                 double lengthBound = (seg.P1 - seg.P0).Length + (seg.P2 - seg.P1).Length + (seg.P3 - seg.P2).Length;
                 int steps = seg.IsLine(0.02) ? 1 : Math.Max(1, (int)Math.Ceiling(lengthBound * 2));
                 var a = seg.P0;
@@ -444,6 +447,11 @@ public static partial class Centerline
                             if (labels[i] == paper || !local.Contains(comp[i])) continue;
                             var q = new Vec2(x + 0.5, y + 0.5);
                             double t = d.LengthSq == 0 ? 0 : Math.Clamp((q - a).Dot(d) / d.LengthSq, 0, 1);
+                            double cap2 = stroke.Width * stroke.Width / 4;
+                            if (curved && first && (q - seg.P0).Dot(seg.P1 - seg.P0) < 0 &&
+                                q.DistSq(seg.P0) > cap2) continue;
+                            if (curved && last && (q - seg.P3).Dot(seg.P3 - seg.P2) > 0 &&
+                                q.DistSq(seg.P3) > cap2) continue;
                             if (q.DistSq(a + d * t) <= r2) labels[i] = paper;
                         }
                     a = b;
