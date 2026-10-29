@@ -294,6 +294,409 @@ public class CenterlineTests
         Assert.Equal(2, doc.Palette.Count);
     }
 
+    // Mixed-width source ownership and editable primitives (VEC97). These use the public
+    // tracer and renderer: a plausible skeleton alone is not a successful recovery.
+    static void AssertInkRetained(RasterImage source, VectorDocument doc, int tolerance)
+    {
+        var render = Rasterizer.Render(doc);
+        for (int y = 0; y < source.Height; y++)
+            for (int x = 0; x < source.Width; x++)
+            {
+                if (source.GetPixel(x, y).R > 128) continue;
+                bool covered = false;
+                for (int dy = -tolerance; dy <= tolerance && !covered; dy++)
+                    for (int dx = -tolerance; dx <= tolerance; dx++)
+                    {
+                        int xx = x + dx, yy = y + dy;
+                        if ((uint)xx >= (uint)source.Width || (uint)yy >= (uint)source.Height) continue;
+                        var c = render.GetPixel(xx, yy);
+                        if (c.A > 128 && c.R < 128) { covered = true; break; }
+                    }
+                Assert.True(covered, $"uncovered source ink at {x},{y}");
+            }
+    }
+
+    static StrokePath AssertPrimitive(VectorDocument doc, Vec2 a, Vec2 b, double width, double endpointTolerance)
+    {
+        var matches = doc.Strokes.Where(s => !s.Closed && s.Segments.Count == 1 &&
+            s.Segments[0].IsLine(0.02) && Math.Abs(s.Width - width) <= Math.Max(0.75, width * 0.15) &&
+            Math.Min(Math.Max(s.Segments[0].P0.DistSq(a), s.Segments[0].P3.DistSq(b)),
+                Math.Max(s.Segments[0].P0.DistSq(b), s.Segments[0].P3.DistSq(a))) <= endpointTolerance * endpointTolerance).ToList();
+        Assert.True(matches.Count == 1, $"expected one editable line {a} to {b}, width {width}; found {matches.Count}");
+        return matches[0];
+    }
+
+    [Theory]
+    [InlineData(3, 1)]
+    [InlineData(5, 1)]
+    [InlineData(7, 1)]
+    [InlineData(3, 2)]
+    [InlineData(5, 2)]
+    public void MixedSolidLongLine_EditableRunAndSolidInkSurvive(int width, int scale)
+    {
+        var img = Make(380 * scale, 180 * scale, (x, y) =>
+            (x >= 20 * scale && x < 80 * scale && y >= 50 * scale && y < 110 * scale) ||
+            (x >= 70 * scale && x < 340 * scale && y >= 78 * scale && y < (78 + width) * scale));
+        var doc = TraceLineArt(img);
+        AssertPrimitive(doc, new Vec2(80 * scale, (78 + width / 2.0) * scale),
+            new Vec2(339.5 * scale, (78 + width / 2.0) * scale), width * scale, 2 * width * scale);
+        AssertInkRetained(img, doc, 2 * scale);
+        var fillOnly = new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette,
+            Regions = doc.Regions, Strokes = [] };
+        var fill = Rasterizer.Render(fillOnly);
+        for (int y = 60 * scale; y < 100 * scale; y++)
+            for (int x = 30 * scale; x < 70 * scale; x++)
+                Assert.True(fill.GetPixel(x, y).R < 128, "solid must remain filled, independently of strokes");
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void MixedTwoWidthOutline_LongCornerRunsAreSeparateEditableLines(int scale)
+    {
+        var img = Make(380 * scale, 250 * scale, (x, y) =>
+        {
+            double xx = (x + 0.5) / scale, yy = (y + 0.5) / scale;
+            return (xx >= 20 && xx <= 80 && yy >= 100 && yy <= 150) ||
+                (xx >= 50 && xx <= 330 && Math.Abs(yy - 40.5) < 2.5) ||
+                (xx >= 50 && xx <= 330 && Math.Abs(yy - 200.5) < 1.5) ||
+                (Math.Abs(xx - 50.5) < 2.5 && yy >= 40 && yy <= 200) ||
+                (Math.Abs(xx - 330.5) < 2.5 && yy >= 40 && yy <= 200);
+        });
+        var doc = TraceLineArt(img);
+        AssertPrimitive(doc, new Vec2(50 * scale, 40 * scale), new Vec2(330 * scale, 40 * scale), 5 * scale, 8 * scale);
+        AssertPrimitive(doc, new Vec2(330 * scale, 40 * scale), new Vec2(330 * scale, 200 * scale), 5 * scale, 8 * scale);
+        AssertPrimitive(doc, new Vec2(50 * scale, 200 * scale), new Vec2(330 * scale, 200 * scale), 3 * scale, 8 * scale);
+        AssertInkRetained(img, doc, 2 * scale);
+    }
+
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    [InlineData(false, 2)]
+    [InlineData(true, 2)]
+    public void MixedSolidJunction_MainRunsRemainContinuous(bool cross, int scale)
+    {
+        var img = Make(380 * scale, 240 * scale, (x, y) =>
+        {
+            double xx = (x + 0.5) / scale, yy = (y + 0.5) / scale;
+            return (xx >= 20 && xx <= 70 && yy >= 95 && yy <= 145) ||
+                (xx >= 60 && xx <= 340 && Math.Abs(yy - 120.5) < 1.5) ||
+                (Math.Abs(xx - 200.5) < 1.5 && yy >= 40 && yy <= (cross ? 200 : 120));
+        });
+        var doc = TraceLineArt(img);
+        var horizontal = AssertPrimitive(doc, new Vec2(70 * scale, 120 * scale), new Vec2(340 * scale, 120 * scale),
+            3 * scale, 6 * scale);
+        var vertical = AssertPrimitive(doc, new Vec2(200 * scale, 40 * scale), new Vec2(200 * scale, (cross ? 200 : 120) * scale),
+            3 * scale, 6 * scale);
+        var hs = horizontal.Segments[0];
+        var vs = vertical.Segments[0];
+        Assert.True(Math.Abs(hs.P0.Y - 120 * scale) < scale && Math.Abs(vs.P0.X - 200 * scale) < scale);
+        AssertInkRetained(img, doc, 2 * scale);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void LocalRecovery_SeparateRingStaysClosed_TextAndSolidStayFilled(int scale)
+    {
+        var img = Make(480 * scale, 260 * scale, (x, y) =>
+        {
+            double xx = (x + 0.5) / scale, yy = (y + 0.5) / scale;
+            double radius = Math.Sqrt((xx - 410) * (xx - 410) + (yy - 90) * (yy - 90));
+            bool glyph = Enumerable.Range(0, 5).Any(i => xx >= 110 + 20 * i && xx < 113 + 20 * i && yy >= 210 && yy < 230);
+            return glyph || radius is >= 22.5 and <= 25.5 ||
+                (xx >= 20 && xx < 80 && yy >= 50 && yy < 110) ||
+                (xx >= 70 && xx < 340 && yy >= 78 && yy < 81);
+        });
+        var doc = TraceLineArt(img);
+        AssertPrimitive(doc, new Vec2(80 * scale, 79.5 * scale), new Vec2(339.5 * scale, 79.5 * scale), 3 * scale, 6 * scale);
+        var ring = Assert.Single(doc.Strokes, s => s.Closed);
+        Assert.InRange(PathLength(ring), 2 * Math.PI * 24 * scale - 6 * scale, 2 * Math.PI * 24 * scale + 6 * scale);
+        Assert.DoesNotContain(doc.Strokes, s => s.Segments.Any(g => g.P0.Y > 200 * scale));
+        var fillOnly = new VectorDocument { Width = doc.Width, Height = doc.Height, Palette = doc.Palette,
+            Regions = doc.Regions, Strokes = [] };
+        var fill = Rasterizer.Render(fillOnly);
+        for (int i = 0; i < 5; i++) Assert.True(fill.GetPixel((111 + 20 * i) * scale, 220 * scale).R < 128);
+        Assert.True(fill.GetPixel(50 * scale, 80 * scale).R < 128);
+        AssertInkRetained(img, doc, 2 * scale);
+    }
+
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(2, 1)]
+    [InlineData(1, 2)]
+    [InlineData(2, 2)]
+    public void MixedScaleClosedGlyphRow_StaysFilled_WithHairline(int hairlineWidth, int scale)
+    {
+        // Same two-counter block glyph geometry for both hairline controls. A very
+        // long hairline controls the global median without changing glyph stroke size.
+        var img = Make(1000 * scale, 180 * scale, (x, y) =>
+        {
+            int xx = x / scale, yy = y / scale;
+            if (xx >= 10 && xx < 990 && yy >= 15 && yy < 15 + hairlineWidth) return true;
+            int gx = (xx - 60) % 30;
+            return xx >= 60 && xx < 194 && gx < 14 && yy >= 60 && yy < 100 &&
+                (gx < 2 || gx >= 12 || yy < 62 || yy >= 98 || yy is >= 79 and < 82);
+        });
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes);
+        Assert.DoesNotContain(doc.Strokes, s => s.Segments.Any(g => g.P0.Y >= 50 * scale || g.P3.Y >= 50 * scale));
+        // Five black glyph regions, ten white counters and the surrounding paper.
+        Assert.Equal(16, doc.Regions.Count);
+        var fill = Rasterizer.Render(new VectorDocument { Width = doc.Width, Height = doc.Height,
+            Palette = doc.Palette, Regions = doc.Regions, Strokes = [] });
+        for (int i = 0; i < 5; i++)
+        {
+            int left = 60 + 30 * i;
+            foreach (int yy in new[] { 60, 80, 99 })
+                Assert.True(fill.GetPixel((left + 7) * scale, yy * scale).R < 128);
+            foreach (int yy in new[] { 70, 90 })
+            {
+                Assert.True(fill.GetPixel(left * scale, yy * scale).R < 128);
+                Assert.True(fill.GetPixel((left + 13) * scale, yy * scale).R < 128);
+                Assert.True(fill.GetPixel((left + 7) * scale, yy * scale).R > 128);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(30, 1)]
+    [InlineData(37, 1)]
+    [InlineData(45, 1)]
+    [InlineData(90, 1)]
+    [InlineData(37, 2)]
+    [InlineData(90, 2)]
+    public void LocalClosedGlyphRow_AnyOrientationStaysFilled(int degrees, int scale)
+    {
+        double angle = degrees * Math.PI / 180, cs = Math.Cos(angle), sn = Math.Sin(angle);
+        var img = Make(1000 * scale, 750 * scale, (x, y) =>
+        {
+            double xx = (x + 0.5) / scale, yy = (y + 0.5) / scale;
+            if (xx >= 10 && xx < 990 && yy >= 15 && yy < 16) return true;
+            double u = (xx - 350) * cs + (yy - 250) * sn;
+            double v = -(xx - 350) * sn + (yy - 250) * cs;
+            double gx = u % 30;
+            return u >= 0 && u < 134 && gx < 14 && v >= 0 && v < 40 &&
+                (gx < 2 || gx >= 12 || v < 2 || v >= 38 || v is >= 19 and < 22);
+        });
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes); // only the independent hairline; zero glyph strokes
+        Assert.All(doc.Strokes, s => Assert.All(s.Segments, g =>
+            Assert.True(g.P0.Y < 30 * scale && g.P3.Y < 30 * scale)));
+        Assert.Equal(16, doc.Regions.Count);
+        var fill = Rasterizer.Render(new VectorDocument { Width = doc.Width, Height = doc.Height,
+            Palette = doc.Palette, Regions = doc.Regions, Strokes = [] });
+        for (int i = 0; i < 5; i++)
+        {
+            // Interior crossbar and counter samples transform with the source glyph.
+            foreach (var (v, black) in new[] { (20.5, true), (10.0, false), (30.0, false) })
+            {
+                double u = 30 * i + 7;
+                int x = (int)((350 + u * cs - v * sn) * scale);
+                int y = (int)((250 + u * sn + v * cs) * scale);
+                Assert.Equal(black, fill.GetPixel(x, y).R < 128);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(1, 0, 1)]
+    [InlineData(2, 0, 1)]
+    [InlineData(3, 0, 1)]
+    [InlineData(4, 0, 1)]
+    [InlineData(1, 37, 1)]
+    [InlineData(2, 43.6, 1)]
+    [InlineData(3, 30, 1)]
+    [InlineData(4, 90, 1)]
+    [InlineData(1, 43.6, 2)]
+    [InlineData(4, 37, 2)]
+    public void ShortMulticounterLabels_KeepFilledInkAndCounters(int count, double degrees, int scale)
+    {
+        var (img, cs, sn) = ShortLabel(count, degrees, scale, false);
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes);
+        Assert.All(doc.Strokes, s => Assert.All(s.Segments, g =>
+            Assert.True(g.P0.Y < 30 * scale && g.P3.Y < 30 * scale)));
+        Assert.Equal(3 * count + 1, doc.Regions.Count);
+        AssertShortLabelFill(img, doc, count, cs, sn, scale);
+    }
+
+    [Theory]
+    [InlineData(2, 0)]
+    [InlineData(3, 37)]
+    [InlineData(4, 90)]
+    public void ShortClosedOpenMixtures_UseNearbyCounterEvidence(int count, double degrees)
+    {
+        var (img, cs, sn) = ShortLabel(count, degrees, 1, true);
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes);
+        AssertShortLabelFill(img, doc, count, cs, sn, 1);
+    }
+
+    static (RasterImage Image, double Cos, double Sin) ShortLabel(int count, double degrees, int scale, bool mixed)
+    {
+        double angle = degrees * Math.PI / 180, cs = Math.Cos(angle), sn = Math.Sin(angle);
+        var img = Make(1000 * scale, 500 * scale, (x, y) =>
+        {
+            double xx = (x + 0.5) / scale, yy = (y + 0.5) / scale;
+            if (xx >= 10 && xx < 990 && yy >= 15 && yy < 16) return true;
+            double u = (xx - 350.35) * cs + (yy - 200.65) * sn;
+            double v = -(xx - 350.35) * sn + (yy - 200.65) * cs;
+            if (u < 0 || u >= 30 * (count - 1) + 14 || v < 0 || v >= 40) return false;
+            int glyph = (int)(u / 30);
+            double gx = u % 30;
+            // Alternating closed B/8 and open E shapes; all share the same source
+            // stroke scale. No glyph count or source coordinates reach the classifier.
+            return gx < 14 && (gx < 2 || ((!mixed || glyph % 2 == 0) && gx >= 12) ||
+                v < 2 || v >= 38 || v is >= 19 and < 22);
+        });
+        return (img, cs, sn);
+    }
+
+    static void AssertShortLabelFill(RasterImage source, VectorDocument doc, int count, double cs, double sn, int scale)
+    {
+        var fillDoc = new VectorDocument { Width = doc.Width, Height = doc.Height,
+            Palette = doc.Palette, Regions = doc.Regions, Strokes = [] };
+        var fill = Rasterizer.Render(fillDoc);
+        for (int i = 0; i < count; i++)
+            foreach (var (v, black) in new[] { (20.5, true), (10.0, false), (30.0, false) })
+            {
+                double u = 30 * i + 7;
+                int x = (int)((350.35 + u * cs - v * sn) * scale);
+                int y = (int)((200.65 + u * sn + v * cs) * scale);
+                Assert.Equal(black, fill.GetPixel(x, y).R < 128);
+            }
+        AssertInkRetained(source, doc, scale);
+    }
+
+    [Theory]
+    [InlineData(1, 0, false)]
+    [InlineData(2, 0, false)]
+    [InlineData(3, 0, false)]
+    [InlineData(4, 0, false)]
+    [InlineData(1, 37, false)]
+    [InlineData(3, 43.6, false)]
+    [InlineData(4, 90, false)]
+    [InlineData(3, 0, true)]
+    [InlineData(4, 30, true)]
+    public void ShortOpenOnlyLabels_StayFilled(int count, double degrees, bool mixedWeight)
+    {
+        // Open E-like glyphs (no closure bar, no counters) at an off-grid origin.
+        double angle = degrees * Math.PI / 180, cs = Math.Cos(angle), sn = Math.Sin(angle);
+        var img = Make(1000, 500, (x, y) =>
+        {
+            double xx = x + 0.5, yy = y + 0.5;
+            if (xx >= 10 && xx < 990 && yy >= 15 && yy < 16) return true;
+            double u = (xx - 350.35) * cs + (yy - 200.65) * sn;
+            double v = -(xx - 350.35) * sn + (yy - 200.65) * cs;
+            if (u < 0 || u >= 30 * (count - 1) + 14 || v < 0 || v >= 40) return false;
+            double t = mixedWeight && (int)(u / 30) % 2 == 1 ? 3 : 2;
+            double gx = u % 30;
+            return gx < 14 && (gx < t || v < t || v >= 40 - t || (v >= 19 && v < 19 + t + 1));
+        });
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes);
+        Assert.All(doc.Strokes, s => Assert.All(s.Segments, g =>
+            Assert.True(g.P0.Y < 30 && g.P3.Y < 30)));
+        AssertInkRetained(img, doc, 1);
+    }
+
+    [Fact]
+    public void CompactRectangleRow_StaysFilledWithoutCornerStrokes()
+    {
+        var img = Make(1000, 200, (x, y) =>
+            (x >= 10 && x < 990 && y == 15) ||
+            Enumerable.Range(0, 5).Any(i =>
+            {
+                int x0 = 100 + 50 * i;
+                return x >= x0 && x < x0 + 30 && y >= 80 && y < 120 &&
+                    (x < x0 + 3 || x >= x0 + 27 || y < 83 || y >= 117);
+            }));
+        var doc = TraceLineArt(img);
+        Assert.Single(doc.Strokes);
+        AssertInkRetained(img, doc, 1);
+    }
+
+    [Fact]
+    public void CompactSingleCavityOutline_IsNotAutomaticallyText()
+    {
+        var img = Make(1000, 180, (x, y) =>
+            (x >= 10 && x < 990 && y == 15) ||
+            (x >= 60 && x < 100 && y >= 60 && y < 90 &&
+                (x < 62 || x >= 98 || y < 62 || y >= 88)) ||
+            (x >= 60 && x < 64 && y >= 60 && y < 64));
+        var doc = TraceLineArt(img);
+        Assert.Contains(doc.Strokes, s => s.Segments.Any(g => g.P0.Y > 50 && (g.P3 - g.P0).Length > 20));
+        AssertInkRetained(img, doc, 1);
+    }
+
+    [Fact]
+    public void MixedScaleLongOpenParallelLines_StillReachLocalExtraction()
+    {
+        var img = Make(1100, 240, (x, y) =>
+            (x >= 10 && x < 1090 && y == 10) ||
+            (Enumerable.Range(0, 5).Any(i =>
+                (x >= 100 && x < 300 && y >= 50 + i * 35 && y < 52 + i * 35) ||
+                (x >= 100 && x < 110 && y >= 46 + i * 35 && y < 56 + i * 35))));
+        var doc = TraceLineArt(img);
+        Assert.Equal(6, doc.Strokes.Count);
+        for (int i = 0; i < 5; i++)
+            Assert.Contains(doc.Strokes, s => s.Segments.Any(g => Math.Abs(g.P0.Y - (51 + i * 35)) < 2 &&
+                (g.P3 - g.P0).Length > 180));
+        AssertInkRetained(img, doc, 1);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CadCircleRowWithDrawingLine_KeepsFiveClosedStrokes(bool vertical)
+    {
+        var img = Make(5000, 1000, (x, y) =>
+        {
+            double xx = x + 0.5, yy = y + 0.5;
+            if (xx >= 10 && xx < 4990 && yy >= 15 && yy < 20) return true;
+            return Enumerable.Range(0, 5).Any(i =>
+            {
+                double dx = xx - (vertical ? 200 : 220 + 170 * i);
+                double dy = yy - (vertical ? 150 + 170 * i : 170);
+                double r = Math.Sqrt(dx * dx + dy * dy);
+                return r is >= 60.5 and < 69.5;
+            });
+        });
+        var doc = TraceLineArt(img);
+        Assert.Equal(6, doc.Strokes.Count);
+        Assert.Equal(5, doc.Strokes.Count(s => s.Closed));
+        Assert.Single(doc.Regions);
+    }
+
+    [Fact]
+    public void DiagonalOpenParallelLinesAttachedToSolids_StillReachLocalExtraction()
+    {
+        double cs = Math.Cos(Math.PI / 4), sn = Math.Sin(Math.PI / 4);
+        var img = Make(1100, 800, (x, y) =>
+        {
+            double xx = x + 0.5, yy = y + 0.5;
+            if (xx >= 10 && xx < 1090 && yy >= 10 && yy < 11) return true;
+            double u = (xx - 350) * cs + (yy - 250) * sn;
+            double v = -(xx - 350) * sn + (yy - 250) * cs;
+            return Enumerable.Range(0, 5).Any(i =>
+                (u >= 100 && u < 300 && v >= 50 + i * 35 && v < 52 + i * 35) ||
+                (u >= 100 && u < 110 && v >= 46 + i * 35 && v < 56 + i * 35));
+        });
+        var doc = TraceLineArt(img);
+        for (int i = 0; i < 5; i++)
+        {
+            double row = 51 + i * 35;
+            Assert.Contains(doc.Strokes, s => s.Segments.Any(g =>
+                (g.P3 - g.P0).Length > 170 &&
+                Math.Abs(-(g.P0.X - 350) * sn + (g.P0.Y - 250) * cs - row) < 3 &&
+                Math.Abs(-(g.P3.X - 350) * sn + (g.P3.Y - 250) * cs - row) < 3));
+        }
+        AssertInkRetained(img, doc, 2);
+    }
+
     // ---- VEC-52 stage 3: CAD regularization ----
 
     [Fact]

@@ -12,8 +12,8 @@ place: `Tracer.Resolve` → `EffectiveParams` (dumped by `vecto trace --stats`).
 | 3 | Palette | exact unique colors, or weighted k-means++ in Oklab over a color histogram; Auto mode merges clusters agglomeratively | `KMeansK` (≤64), `MergeThreshold` 0.055 (0.03 photo), edge-excluded sampling (Δchannel > 24) | PaletteBuilder.cs · `PaletteBuilder.Build` |
 | 4 | Labeling | nearest palette color in Oklab; alpha < 128 → transparent (-1) | `Segmenter.OpaqueThreshold` | Segmentation.cs · `Segmenter.Label` |
 | 5 | Absorption | regions < MinRegionArea relabeled to longest-border neighbor (iterated ≤10 passes); eats AA fringes and dust | `MinRegionArea` per Detail/Style (2–24 px) | Segmentation.cs · `Segmenter.AbsorbSmallRegions` |
-| 5b | Centerline extraction (LineArt only) | ink-mask 4-connected components → exact squared EDT → medial ridge → skeleton cleanup → junction-split chains (ridge bridge reconnects staircase breaks) → spur pruning → per-chain width (2·DT−1, even-width twin correction); a component is centerlined only when thin AND long AND not a text-row glyph — text, hatching and wide ink keep the filled region treatment | `ThinFactor` 2.0, `ThinSlack` 0.75, `LongFactor` 8.0, `TextMaxFactor` 20.0, `TextPeerMin` 4, `BridgeDist` 4.5 px, `BridgeMaxAngleDeg` 45° | Centerline.cs · `Centerline.Extract` / `EdtSq` / `Ridge` / `Cleanup` / `BuildStroke` |
-| 5c | CAD regularization (LineArt only) | corner-split runs: total-least-squares straight-line hypothesis at a width-derived tolerance (45°-multiple snap) → else the fitter's arc/Bezier path (Kåsa arcs; clean supported rings can come out canonical/exact); junction weld merges collinear pieces a crossing split; endpoints snap to true line-line intersections; angle rationalization: wrap-aware near-parallel clustering → 15°-grid snap → whole-degree rest | `FitWidthFactor` 0.5 (clamp 0.25–1.5 px), `CadAngleSnapDeg` 1.5°, `JunctionMergeGap` 4.5 px, `AngleClusterTolDeg` 1.0°, `AngleGridStepDeg` 15°, `AngleGridSnapDeg` 1.5° | Centerline.cs · `FitCadPrimitives` / `StraightRunLine` / `MergeCollinearAcrossJunctions` / `SnapEndsToIntersections` / `RationalizeLineAngles` |
+| 5b | Centerline extraction (LineArt only) | ink-mask 4-connected components → exact squared EDT → medial ridge → skeleton cleanup → junction-split chains (ridge bridge reconnects staircase breaks) → spur pruning → per-chain width (2·DT−1, even-width twin correction); whole components require thin AND long AND not a text-row glyph; before either admission, repeated similar-size row components are protected using the existing global glyph scale plus a compact (aspect ≤ 4) component-ridge-median glyph scale, so hairlines cannot make larger glyph rows bypass protection; new local candidates additionally use component-centre row directions at arbitrary angles (four similar-size peers within 4 × component maximum dimension, transverse error ≤ 0.25 × smaller component maximum dimension); own ridge-median/EDT-maximum scale with intrinsic principal-axis compactness ≤ 4 excludes diagonal hatches, and a 64-neighbour hypothesis cap conservatively preserves fill in crowded contexts. Uniform thin circular annuli (box aspect ≤ 1.1, radial thickness ≤ 0.25 × mean radius) retain CAD admission; round O/C-like letters remain ambiguous. The annulus exception also bounds the added component-scale horizontal guard above the original global glyph scale, preserving CAD circle rows; the original global glyph rule remains intact. VEC107/109: new local admission of any compact component (intrinsic extent ≤ 20 × (own median ridge width + parity slack)) requires positive primitive evidence — currently only an isolated full rectangular frame (own-frame band coverage ≥ 95 % ink, every side ≥ 90 % inked) around exactly one counter with no similar-scale compact neighbour within 4 × its extent; all other compact marks (open E/F/H/L, numerals, B/8, rectangle rows) stay filled; thin annuli keep their own path. The neighbour scan runs only for that rare rectangle case and exits on the first hit. Mixed-width components beyond the global size gate may emit long locally thin runs with near-uniform 10th–90th percentile widths (0.6–1.4 × run median). Nonuniform rejected runs get one partition by width bands around their median, median-filtered with radius ceil(global median width), min 2 px; each part must independently pass the original support/length/uniformity checks. Source-supported complete circular cavities in explicitly non-text local-eligible mixed components emit one measured, closed four-quarter cubic stroke; original-ink coverage rejects gaps/occlusion, and only fragments whose entire painted band is contained by the accepted ring are removed. Whole-component rings retain their existing path. DXF recovers analytic bulges and measured width; SVG retains the cubic approximation. Local source ink is released only within the final emitted round stroke band (width/2 + 0.5 px), after fitting, welding, angle and junction movement; solid/uncovered ink stays filled | `ThinFactor` 2.0, `ThinSlack` 0.75, `LongFactor` 8.0, `TextMaxFactor` 20.0, `TextPeerMin` 4, `BridgeDist` 4.5 px, `BridgeMaxAngleDeg` 45°, `LocalUniformLow/High` 0.6/1.4 | Centerline.cs + CenterlineLocal.cs · `Centerline.Extract` / `EdtSq` / `Ridge` / `Cleanup` / `BuildStroke` |
+| 5c | CAD regularization (LineArt only) | corner-split runs: total-least-squares straight-line hypothesis at a width-derived tolerance (45°-multiple snap) → else the fitter's arc/Bezier path (Kåsa arcs; clean supported rings can come out canonical/exact); junction weld merges collinear pieces a crossing split; endpoints snap to true line-line intersections; mixed-component exact fitted straight segments at least 8 × their width become individual editable paths before angle rationalization, using nearest ridge samples along each primitive interior (exclude 2 × chain width at either end; search radius ceil(line tolerance + 1 px), require ≥ 8 × chain width samples and the same 0.6–1.4 uniformity check) for its own weight (closed rings/curved portions stay coherent; straight remnants shorter than 2 × width retain fill instead of becoming cap/spur objects); angle rationalization: wrap-aware near-parallel clustering → 15°-grid snap → whole-degree rest | `FitWidthFactor` 0.5 (clamp 0.25–1.5 px), `CadAngleSnapDeg` 1.5°, `JunctionMergeGap` 4.5 px, `AngleClusterTolDeg` 1.0°, `AngleGridStepDeg` 15°, `AngleGridSnapDeg` 1.5° | Centerline.cs · `FitCadPrimitives` / `StraightRunLine` / `MergeCollinearAcrossJunctions` / `SnapEndsToIntersections` / `RationalizeLineAngles` |
 | 6 | Components | 4-connected flood fill (4-conn is required for a planar crack graph) | — | Segmentation.cs · `Segmenter.ConnectedComponents` |
 | 7 | Boundary graph | crack-following on the pixel-corner lattice; maximal chains between junctions traced once, shared by both regions; left-turn preference pinches checkerboard points instead of crossing | `TurnOrder` | BoundaryGraph.cs · `BoundaryTracer.Run` / `.Walk` / `.Assemble` |
 | 8 | Corners | turn angle over k-vertex support on the raw staircase, greedy non-max suppression; then **validation**: re-measured on refined sub-pixel geometry (≥55° survives), demotions reprocess the chain — kills quantization-spike corners on small circles | k=3, threshold 68° (must exceed 63.4° — see comment at `Tracer.Resolve`) | ChainGeometry.cs · `ChainGeometry.DetectCorners` / `TurnAngleAt`; Tracer.cs · chain loop |
@@ -83,3 +83,46 @@ faithful independent SVG renderer.
 - Same input + seed → byte-identical SVG; output is culture-invariant (de-DE guard).
 - An anti-aliased axis-aligned box with sub-pixel borders traces to exactly 4 lines that
   are *exactly* horizontal/vertical (1e-6) at the encoded sub-pixel positions (±0.2 px).
+
+VEC114 local junction finishing (`CenterlineLocalJunctions.cs`): after legacy final
+snapping, before local ink release, spatially indexed same-component painted
+line/circle bands may shorten finite local line endpoints to their centerline.
+Original component cross-sections and the complete removed centerline interval
+must support the join; parallel, foreign, unsupported and crossing ends stay.
+Accepted circle proposals retain their measured geometry and source identity.
+
+Local analytic arc endpoints use source tangent-side cross-sections beyond the join,
+with observation reach `max(6 × width, 3 × sqrt(radius × width))`. At least 12 of
+17 sections must fit a straight centreline (0.75 px residual); isolated remote
+branch sections may be omitted, but the attachment must contain continuous source
+ink. Tangent estimates require a coherent central population (interquartile spread
+≤2 px along the circle). Only a verified tangent permits a width-long endpoint
+section contaminated by the attachment; interior gaps retain the strict section
+check. Output angles use DetMath. Final curved ownership releases only the painted
+half-width, retaining boundary source ink as fill instead of using the straight
+line's extra 0.5 px release margin. Anchors: `RecoverLocalArcs`, `ReleaseLocalInk`.
+
+VEC122 local curve ownership retains the half-pixel raster release margin in
+curve interiors and closed loops. Beyond an open curved endpoint's tangent
+plane, only the painted half-width round cap releases source ink. Tangent
+recovery targets advance from the source-supported trimmed seed angle unless
+the seed already overruns into the verified straight attachment: backward
+correction requires the overrun centerline to remain in that painted side and
+no distinct circular section four widths beyond the foot. Crossing-contaminated
+sections may retain source fill rather than claim a complete arc. The four-width
+probe is a local heuristic: a genuine circular continuation can still overlap
+the straight band at that distance, so a failed uniform section does not prove
+that the circle ends at the fitted foot. Such continuation can remain editable
+only as source fill; the backward guard does not guarantee a complete analytic
+arc across this join. A farther probe alone also leaves the intervening
+nonuniform sections unsupported by the current sweep validation.
+
+VEC126 filled-wall cap fitting retains editable finite anchors unless outward
+round-cap paint exceeds a two-pixel same-component source envelope (combined
+raster-boundary and fitted-centerline uncertainty). The tested cap footprint
+includes its half-pixel edge coverage. Only ends with long transverse filled-wall
+support and continuous inward source ink qualify; open ends remain unchanged.
+Search advances inward in quarter-pixel steps and accepts the first supported
+position, bounded by the original half-width. Released source ownership is still
+computed after final geometry, preserving uncovered filled-wall ink. Nonfinite
+lengths/widths are rejected. Anchor: `RepairLocalJunctions` / `FitCap`.

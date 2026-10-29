@@ -34,7 +34,7 @@ public sealed class StrokePath
 /// families unify on one angle, near-grid angles snap onto the 15° grid, and everything
 /// else rounds to a whole degree.
 /// </summary>
-public static class Centerline
+public static partial class Centerline
 {
     /// <summary>A component is thin when its widest stroke is at most this × the image's median width.</summary>
     public const double ThinFactor = 2.0;
@@ -139,7 +139,18 @@ public static class Centerline
             c.MaxDim = Math.Max(c.MaxX - c.MinX + 1, c.MaxY - c.MinY + 1);
             c.Centerline = c.Width <= ThinFactor * median + ThinSlack && c.MaxDim >= LongFactor * median;
         }
-        MarkTextRows(comps, median);
+        MarkTextRows(comps, median, widthAt, w);
+        MarkOrientedLocalTextRows(comps, median, widthAt, w);
+
+        // VEC106: the explicit non-text local-eligible mixed components are the only
+        // circle-eligible set (whole-component rings keep their existing path and glyph
+        // rows stay filled). Proposals read the ORIGINAL ink/component planes — the call
+        // sits before any source erasure below.
+        var local = new HashSet<int>();
+        foreach (var c in comps)
+            if (!c.Centerline && LocalEligible(c, median))
+                local.Add(c.Id);
+        var circles = ProposeLocalCircles(inkMask, comp, local, comps, w, h, ct);
 
         int pruneLen = Math.Max(2, (int)Math.Ceiling(2 * median));
         int growLen = Math.Max(4, (int)Math.Ceiling(median));
@@ -185,12 +196,28 @@ public static class Centerline
             if (c.Centerline && c.Emitted)
                 foreach (int i in c.Pixels)
                     labels[i] = paper;
+        // VEC95: mixed-width components (a solid attached to thin linework) give up only the
+        // ink their supported local runs actually stroke; solids and the rest stay filled
+        foreach (var c in comps)
+            if (local.Contains(c.Id))
+            {
+                ct.ThrowIfCancellationRequested();
+                ExtractLocal(c, comp, skel, widthAt, dtSq, inkMask, ink, median, pruneLen, growLen, p, w, h, strokes);
+            }
+        // VEC106: accepted circles replace the ring fragments local recovery traced and
+        // join the stroke list before the stage-3 passes (which skip closed strokes, so
+        // the circle keeps its measured geometry; the band it paints is released with
+        // the other local ink below)
+        IntegrateCircles(strokes, circles, ink, comp, w, h);
         // stage 3 junction pass: weld collinear pieces split by junctions or scan gaps,
         // then land every line endpoint that ends against another line on the exact
         // intersection — the strokes a CAD user sees cross and meet cleanly
         MergeCollinearAcrossJunctions(strokes);
+        SeparateLocalPrimitives(strokes, local, comp, widthAt, w, h);
         RationalizeLineAngles(strokes);
         SnapEndsToIntersections(strokes);
+        RepairLocalJunctions(strokes, circles, local, comp, w, h);
+        ReleaseLocalInk(strokes, local, comp, labels, paper, w, h);
         return strokes;
     }
 
@@ -268,12 +295,26 @@ public static class Centerline
     }
 
     /// <summary>
-    /// Thin+long components of glyph size that sit in a dense row of same-size neighbours are
-    /// text (Fletcher–Kasturi): they stay filled — centerlining glyphs destroys legibility.
+    /// Repeated glyph-sized components stay filled before either extraction path. The
+    /// component ridge median supplies a second scale when hairlines dominate the image.
+    /// Compactness excludes long open hatch lines from that additional candidate set;
+    /// row context, rather than closure alone, distinguishes glyphs from isolated CAD rings.
     /// </summary>
-    static void MarkTextRows(List<Comp> comps, double median)
+    static void MarkTextRows(List<Comp> comps, double median, double[] widthAt, int w)
     {
-        var cand = comps.Where(c => c.Centerline && c.MaxDim <= TextMaxFactor * median).OrderBy(c => c.MinY).ToList();
+        bool Candidate(Comp c)
+        {
+            if (c.Centerline && c.MaxDim <= TextMaxFactor * median) return true;
+            // The added component-scale fallback must not demote a previously valid
+            // CAD circle just because similar circles form a row. Preserve the original
+            // global glyph-scale rule above; this exception is geometry + scale evidence.
+            if (c.MaxDim > TextMaxFactor * median && IsThinAnnulus(c, w)) return false;
+            int shortDim = Math.Min(c.MaxX - c.MinX + 1, c.MaxY - c.MinY + 1);
+            if (c.MaxDim > 4 * shortDim) return false;
+            var widths = c.Pixels.Where(i => widthAt[i] > 0).Select(i => widthAt[i]).ToList();
+            return widths.Count > 0 && c.MaxDim <= TextMaxFactor * Median(widths);
+        }
+        var cand = comps.Where(Candidate).OrderBy(c => c.MinY).ToList();
         if (cand.Count < TextPeerMin + 1) return;
         int maxDim = cand.Max(c => c.MaxDim);
         var miny = new double[cand.Count];
@@ -293,7 +334,7 @@ public static class Centerline
                 if (oi == ci || !Peer(c, o)) continue;
                 if (++peers >= TextPeerMin) break;
             }
-            if (peers >= TextPeerMin) c.Centerline = false;
+            if (peers >= TextPeerMin) { c.TextRow = true; c.Centerline = false; }
         }
     }
 
@@ -1247,6 +1288,7 @@ public static class Centerline
         public int Id;                                    // set after all components exist
         public double Width;                               // 2×max DT − 1
         public int MaxDim;
+        public bool TextRow;
         public bool Centerline;
         public bool Emitted;
     }
