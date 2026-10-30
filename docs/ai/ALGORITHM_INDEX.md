@@ -133,6 +133,13 @@ explained far ink − 2 × invented ≥ 10 × width. Bridged intervals replace t
 section requirement with an inked centreline in sweep validation. Gaps, walls,
 transverse crossings, parallel sides, different radii and tangent stops keep
 fill. Anchors: `RecoverLocalArcs` · `Continue` / `Attempt` / `Walk` / `Painted`.
+VEC134 ownership: a walk that ends still thin at its bound keeps stepping thin
+sections on the confirmed circle to its own source end (total sweep ≤1.85π).
+After a bridged arc is accepted, any open ridge chain lying wholly inside its
+sweep, every pixel ≤1 width from the circle and at least half ≤width/2, is owned
+by that arc, so the far ridge never becomes a second overlapping curve. The
+straight side's ridge leaves the band and keeps its stroke; different radii
+(off-centre >width/2 for most of the chain) and unbridged arcs are untouched.
 
 VEC126 filled-wall cap fitting retains editable finite anchors unless outward
 round-cap paint exceeds a two-pixel same-component source envelope (combined
