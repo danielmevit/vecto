@@ -177,6 +177,27 @@ public static partial class Centerline
             width = measuredWidth;
             strokes.Add(ArcStroke(center, radius, start, sweep, width, ink));
             foreach (var member in members) owned.Add(member);
+            // A continuation through a merged band explains far-side ridge chains that
+            // never joined by endpoint. A chain is this arc only if all of it lies
+            // inside the accepted sweep and band, and most of it on the centreline;
+            // the straight side's own ridge leaves the band and keeps its stroke.
+            if (bridges.Count > 0)
+                foreach (var (run, runClosed) in chains)
+                {
+                    if (runClosed || run.Count < 2 || owned.Contains(run)) continue;
+                    int onCircle = 0;
+                    bool inside = true;
+                    foreach (int q in run)
+                    {
+                        var p = Point(q);
+                        double offset = Math.Abs((p - center).Length - radius);
+                        double along = Delta(Angle(p) - start) * Math.Sign(sweep);
+                        if (along < 0) along += 2 * Math.PI;
+                        if (offset > width || along > Math.Abs(sweep)) { inside = false; break; }
+                        if (offset <= width / 2) onCircle++;
+                    }
+                    if (inside && onCircle * 2 >= run.Count) owned.Add(run);
+                }
 
             double Angle(Vec2 p) => DetMath.Atan2(p.Y - center.Y, p.X - center.X);
             // A near-tangent straight side paints over the circular band, so radial
@@ -281,6 +302,11 @@ public static partial class Centerline
                     center = c; radius = r; other = newOther;
                     bridges.Add((Math.Min(newAngle, farStart), Math.Max(newAngle, farStart)));
                     tangent = false;
+                    // The walk is bounded; a far run still thin at that bound continues
+                    // on the same confirmed circle until its own source end.
+                    double limit = newOther + sign * Math.PI * 1.85, step = .5 / r;
+                    while ((limit - farEnd) * sign > step && Section(farEnd + sign * step, c, r, width))
+                        farEnd += sign * step;
                     return farEnd;
                 }
                 return angle;

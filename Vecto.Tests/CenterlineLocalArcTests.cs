@@ -165,6 +165,45 @@ public class CenterlineLocalArcTests
     }
 
     [Theory]
+    [InlineData(0, 0)]
+    [InlineData(23, .35)]
+    [InlineData(78, .35)]
+    public void ArcContinuingFarPastANearTangentSideIsOneUnduplicatedPrimitive(double rotation, double phase)
+    {
+        // One continuous source circle from -90 to +90 deg, rasterized in one pass,
+        // with a straight side grazing it near 0 deg. The far ridge beyond the merged
+        // band belongs to the same arc: one analytic arc, no overlapping second curve.
+        var fixture = Make(true, 1, rotation, 100, 10, "extended", phase);
+        var center = fixture.Targets[0].Center;
+        double start = -Math.PI / 2 + rotation * Math.PI / 180, sweep = Math.PI;
+        var stroke = Assert.Single(fixture.Doc.Strokes, s => Covers(s, center, start, sweep, 100));
+        Assert.All(stroke.Segments, g => Assert.False(g.IsLine(.05)));
+        double signed = AssertEndpoints(stroke, center, start, sweep, 100, 1);
+        AssertAnalyticExport(fixture.Doc, stroke, center, 100, signed);
+        // No other curved stroke may retrace any 10 deg stretch of the same circle.
+        // (At 0 deg a short straight stub at the -90 deg tangent junction is not a curve.)
+        foreach (var other in fixture.Doc.Strokes.Where(s => s != stroke && !s.Segments.All(g => g.IsLine(.5))))
+        {
+            var samples = other.Segments.SelectMany(g => Enumerable.Range(0, 21).Select(i => g.Eval(i / 20.0)))
+                .Where(p => Math.Abs((p - center).Length - 100) <= 3).ToList();
+            var angles = samples.Select(p => Math.Atan2(p.Y - center.Y, p.X - center.X)).Order().ToList();
+            Assert.True(angles.Count < 2 || (angles[^1] - angles[0]) * 180 / Math.PI < 10,
+                $"duplicate curve on the arc circle: {string.Join(",", angles.Select(a => Math.Round(a * 180 / Math.PI)))}");
+        }
+        var rendered = Rasterizer.Render(fixture.Doc);
+        int source = 0, lost = 0;
+        for (int y = 0; y < fixture.Source.Height; y++)
+            for (int x = 0; x < fixture.Source.Width; x++)
+                if (fixture.Source.GetPixel(x, y).R < 128)
+                {
+                    source++;
+                    if (rendered.GetPixel(x, y).R >= 128) lost++;
+                }
+        Assert.InRange(lost / (double)source, 0, rotation % 78 == 0 ? .025 : .045);
+        Assert.True(rendered.GetPixel((int)fixture.Solid.X, (int)fixture.Solid.Y).R < 128);
+    }
+
+    [Theory]
     [InlineData("nc-gap", 0, 0)]
     [InlineData("nc-gap", 23, .35)]
     [InlineData("nc-cross", 0, 0)]
@@ -366,11 +405,12 @@ public class CenterlineLocalArcTests
                         if (kind == "nc-radius")
                             ink |= a >= 20 * Math.PI / 180 && a <= 45 * Math.PI / 180 && Math.Abs(q.Length - radius - 7) <= width / 2;
                     }
-                    if (kind is "backward-foot" or "near-crossing" or "tangent-foot")
+                    if (kind is "backward-foot" or "near-crossing" or "tangent-foot" or "extended")
                     {
                         double a = Math.Atan2(q.Y, q.X);
-                        double tilt = kind is "near-crossing" or "tangent-foot" ? .10 : 0;
-                        ink = (a >= -Math.PI / 2 && a <= (kind == "tangent-foot" ? -Math.Atan(tilt) : 45 * Math.PI / 180) &&
+                        double tilt = kind is "near-crossing" or "tangent-foot" or "extended" ? .10 : 0;
+                        double arcEnd = kind switch { "tangent-foot" => -Math.Atan(tilt), "extended" => Math.PI / 2, _ => 45 * Math.PI / 180 };
+                        ink = (a >= -Math.PI / 2 && a <= arcEnd &&
                             Math.Abs(q.Length - radius) <= width / 2) ||
                             (p.X >= 150 && p.X <= 320 && Math.Abs(q.Y + radius) <= width / 2) ||
                             (p.Y >= 300 && p.Y <= 500 && Math.Abs(q.X - radius * (kind == "tangent-foot" ? Math.Sqrt(1 + tilt * tilt) : 1) - q.Y * tilt) <= width / 2);
