@@ -226,6 +226,203 @@ public class CenterlineLocalJunctionTests
         if (wall) Assert.True(rendered.GetPixel((int)solid.X, (int)solid.Y).R < 128);
     }
 
+    // VEC143 source scene: two thick rails make the global line weight 16 px, so the local
+    // length gate is 128 px, and an attached solid boss sends the component down the local
+    // path. Thin stems join the rails and read as a parallel hatch family.
+    // A "stepped" stem is 8 px wide at both ends and 9 px between; the width step leaves no
+    // ridge maximum, so the stem traces as crumb + main chain + crumb with a short main chain.
+    const int HatchTop = 216, HatchRailWidth = 16;
+
+    static RasterImage HatchScene(int length, (int X, bool Stepped)[] stems, Func<int, int, bool>? extraInk = null,
+        Func<int, int, bool>? paper = null)
+    {
+        int bottom = HatchTop + length;
+        var image = new RasterImage(1600, bottom + HatchRailWidth + 200);
+        for (int y = 0; y < image.Height; y++)
+            for (int x = 0; x < image.Width; x++)
+            {
+                bool rail = x >= 100 && x < 1500 &&
+                    ((y >= HatchTop - HatchRailWidth && y < HatchTop) || (y >= bottom && y < bottom + HatchRailWidth));
+                bool boss = x >= 1400 && x < 1480 && y >= HatchTop - HatchRailWidth - 60 && y < HatchTop - HatchRailWidth;
+                bool stem = false;
+                foreach (var (sx, stepped) in stems)
+                {
+                    int width = stepped && (y < HatchTop + 12 || y >= bottom - 12) ? 8 : 9;
+                    stem |= x >= sx && x < sx + width && y >= HatchTop && y < bottom;
+                }
+                bool ink = rail || boss || stem || (extraInk?.Invoke(x, y) ?? false);
+                if (paper?.Invoke(x, y) ?? false) ink = false;
+                image.SetPixel(x, y, ink ? new Rgba32(0, 0, 0, 255) : new Rgba32(255, 255, 255, 255));
+            }
+        return image;
+    }
+
+    static VectorDocument TraceLineArt(RasterImage image) =>
+        Tracer.Trace(image, new TraceOptions { Style = ImageStyle.LineArt }).Document;
+
+    // Every straight stroke running along a stem's column, wherever it lies vertically.
+    static List<StrokePath> StemStrokes(VectorDocument doc, int x) =>
+        doc.Strokes.Where(s => s.Segments.Any(g => g.IsLine(.05) &&
+            Math.Abs(g.P0.X - g.P3.X) < 2 && Math.Abs(g.P0.X - (x + 4.5)) < 6)).ToList();
+
+    [Fact]
+    public void FragmentedHatchMemberBecomesOneEditableLineInItsFamily()
+    {
+        const int length = 148;
+        int[] xs = [300, 371, 442, 513];
+        var image = HatchScene(length, [(xs[0], false), (xs[1], false), (xs[2], false), (xs[3], true)]);
+        var doc = TraceLineArt(image);
+        double topCentre = HatchTop - HatchRailWidth / 2.0, bottomCentre = HatchTop + length + HatchRailWidth / 2.0;
+        var directions = new List<double>();
+        foreach (int x in xs)
+        {
+            var stroke = Assert.Single(StemStrokes(doc, x));
+            Assert.False(stroke.Closed);
+            var line = Assert.Single(stroke.Segments);
+            Assert.True(line.IsLine(.02));
+            Assert.InRange(stroke.Width, 7.5, 9.5);
+            Assert.InRange(line.P0.X, x + 3, x + 6);
+            // Each end stays inside its rail's ink, within half a rail of the rail's centre.
+            Assert.InRange(Math.Min(line.P0.Y, line.P3.Y), topCentre - HatchRailWidth / 2.0, topCentre + HatchRailWidth / 2.0);
+            Assert.InRange(Math.Max(line.P0.Y, line.P3.Y), bottomCentre - HatchRailWidth / 2.0, bottomCentre + HatchRailWidth / 2.0);
+            directions.Add(Math.Abs(line.P3.X - line.P0.X));
+        }
+        Assert.All(directions, d => Assert.InRange(d, 0, 1e-6));
+
+        var dxf = DxfWriter.Write(doc);
+        double dxfX = doc.Strokes.Single(s => StemStrokes(doc, xs[3]).Contains(s)).Segments[0].P0.X;
+        var vertices = DxfPolylines(dxf).Single(v => v.All(p => Math.Abs(p.X - dxfX) < 1e-2));
+        Assert.Equal(2, vertices.Count);
+        Assert.All(vertices, v => Assert.Equal(0, v.Bulge));
+
+        // The source ink around the recovered line, its rails and its peers stays painted.
+        var rendered = Rasterizer.Render(doc);
+        for (int y = HatchTop + 2; y < HatchTop + length - 2; y += 7)
+            Assert.True(rendered.GetPixel(xs[3] + 4, y).R < 128);
+        Assert.True(rendered.GetPixel(800, HatchTop - 8).R < 128);
+        Assert.True(rendered.GetPixel(xs[3] + 35, HatchTop + 70).R > 128);
+    }
+
+    [Fact]
+    public void CompactClosedGlyphRowAtHatchScaleStaysFilled()
+    {
+        // Same width and pitch as the hatch, attached to the rail so it is local ink, but
+        // the marks are compact closed loops: nothing about them is a long open member.
+        int[] xs = [300, 371, 442, 513];
+        bool Loop(int x, int y)
+        {
+            foreach (int gx in xs)
+            {
+                bool outer = x >= gx && x < gx + 40 && y >= HatchTop - 70 && y < HatchTop - 16;
+                bool inner = x >= gx + 9 && x < gx + 31 && y >= HatchTop - 61 && y < HatchTop - 25;
+                if (outer && !inner) return true;
+            }
+            return false;
+        }
+        var doc = TraceLineArt(HatchScene(148, [(700, false), (771, false), (842, false), (913, true)], Loop));
+        var rendered = Rasterizer.Render(doc);
+        foreach (int gx in xs)
+        {
+            Assert.DoesNotContain(doc.Strokes, s => s.Segments.Any(g =>
+                Math.Max(g.P0.Y, g.P3.Y) < HatchTop - 18 && g.P0.X >= gx - 2 && g.P0.X <= gx + 42));
+            // Stem, top bar and counter of every loop keep their source appearance.
+            Assert.True(rendered.GetPixel(gx + 4, HatchTop - 45).R < 128);
+            Assert.True(rendered.GetPixel(gx + 20, HatchTop - 66).R < 128);
+            Assert.True(rendered.GetPixel(gx + 20, HatchTop - 45).R > 128);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void HatchMemberNeverExtendsAcrossCrossingOrSolid(bool solid)
+    {
+        // Every stem is long enough on its own, except that the last one is cut mid-span:
+        // no single uniform span of it reaches the length gate, and it must stay in pieces.
+        const int length = 200;
+        int mid = HatchTop + length / 2;
+        Func<int, int, bool> block = solid
+            ? (x, y) => x >= 490 && x < 546 && y >= mid - 28 && y < mid + 28
+            : (x, y) => x >= 480 && x < 556 && y >= mid - 4 && y < mid + 5;
+        var doc = TraceLineArt(HatchScene(length, [(300, false), (371, false), (442, false), (513, true)], block));
+        foreach (var stroke in StemStrokes(doc, 513))
+            foreach (var g in stroke.Segments)
+            {
+                Assert.True(Math.Max(g.P0.Y, g.P3.Y) <= mid + 2 || Math.Min(g.P0.Y, g.P3.Y) >= mid - 2,
+                    "a member must not run through the interruption");
+            }
+        var rendered = Rasterizer.Render(doc);
+        Assert.True(rendered.GetPixel(517, mid).R < 128);
+        if (solid) Assert.True(rendered.GetPixel(495, mid - 20).R < 128);
+    }
+
+    [Fact]
+    public void HatchMemberDoesNotBridgeSourcePaper()
+    {
+        const int length = 200;
+        int mid = HatchTop + length / 2;
+        var doc = TraceLineArt(HatchScene(length, [(300, false), (371, false), (442, false), (513, true)], null,
+            (x, y) => x >= 505 && x < 530 && y >= mid - 4 && y < mid + 4));
+        var rendered = Rasterizer.Render(doc);
+        Assert.True(rendered.GetPixel(517, mid).R > 128);
+    }
+
+    public static TheoryData<int[]> UnsupportedHatchFamilies => new()
+    {
+        new[] { 442, 513 },                 // one peer: no family at all
+        new[] { 300, 442, 513 },            // three members: below the family size
+        new[] { 300, 340, 442, 513 },       // irregular pitch
+        new[] { 300, 371, 460, 513 },       // irregular pitch beside the stepped stem
+    };
+
+    [Theory]
+    [MemberData(nameof(UnsupportedHatchFamilies))]
+    public void SteppedStemWithoutRegularFamilyKeepsItsFill(int[] xs)
+    {
+        // The last stem is stepped and short-chained. Without spacing evidence it stays as it
+        // was on accepted dev: filled, not stroked, and still fully painted.
+        var stems = xs.Select((x, i) => (x, i == xs.Length - 1)).ToArray();
+        var doc = TraceLineArt(HatchScene(148, stems));
+        Assert.Empty(StemStrokes(doc, xs[^1]));
+        var rendered = Rasterizer.Render(doc);
+        for (int y = HatchTop + 2; y < HatchTop + 146; y += 7)
+            Assert.True(rendered.GetPixel(xs[^1] + 4, y).R < 128);
+    }
+
+    [Fact]
+    public void AllSteppedFamilyHasNoIndependentPeerAndStaysFilled()
+    {
+        // Spacing alone is not enough: at least two members must pass admission themselves.
+        int[] xs = [300, 371, 442, 513];
+        var doc = TraceLineArt(HatchScene(148, xs.Select(x => (x, true)).ToArray()));
+        foreach (int x in xs) Assert.Empty(StemStrokes(doc, x));
+    }
+
+    static List<List<(double X, double Y, double Bulge)>> DxfPolylines(string dxf)
+    {
+        var lines = dxf.Split('\n').Select(l => l.Trim()).ToArray();
+        var result = new List<List<(double X, double Y, double Bulge)>>();
+        List<(double X, double Y, double Bulge)>? current = null;
+        for (int i = 1; i < lines.Length; i += 2)
+        {
+            if (lines[i - 1] != "0") continue;
+            if (lines[i] == "POLYLINE") result.Add(current = []);
+            else if (lines[i] == "VERTEX" && current != null)
+            {
+                double x = 0, y = 0, bulge = 0;
+                for (int j = i + 1; j + 1 < lines.Length && lines[j] != "0"; j += 2)
+                {
+                    double value = lines[j] is "10" or "20" or "42" ? double.Parse(lines[j + 1], System.Globalization.CultureInfo.InvariantCulture) : 0;
+                    if (lines[j] == "10") x = value;
+                    if (lines[j] == "20") y = value;
+                    if (lines[j] == "42") bulge = value;
+                }
+                current.Add((x, y, bulge));
+            }
+        }
+        return result;
+    }
+
     static Vec2 Run(double scale, double degrees, bool crossing, bool gap, bool foreign, bool parallel = false)
     {
         const int w = 400;
