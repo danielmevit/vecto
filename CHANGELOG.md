@@ -2,13 +2,19 @@
 
 ## Unreleased
 
+- **Long CAD arcs can pass close straight-line joins as one editable curve.**
+  Line art mode follows a source-supported circle through the merged ink and
+  owns its far-side ridge, avoiding a second overlapping curved stroke. A
+  controlled arc from −90° to +90° now exports as one analytic arc; genuine
+  gaps, crossings and mismatched curves remain separate. The attached straight
+  line can still be partly filled, and the main 600-DPI CAD reference's measured
+  line and arc counts are unchanged.
 - **More connected CAD geometry becomes editable.** Line art mode now recovers
   source-supported circles, arcs and straight strokes inside mixed drawings,
   joins nearby linework and keeps uncovered ink as fill. On the controlled
   600-DPI CAD reference, 23/27 measured lines are present, 14 are clean
   two-anchor strokes, and the circle plus three arcs export as analytic DXF
-  geometry. Text and solid marks stay filled. An arc running close beside a
-  straight line can still remain partly filled rather than one editable arc.
+  geometry. Text and solid marks stay filled.
 - **CAD reference arc checks recognize complete DXF arcs.** The controlled drawing
   comparison now evaluates an entire bulged polyline, including the same arc traced
   in reverse, while rejecting malformed, partial or opposite-side curves. This
