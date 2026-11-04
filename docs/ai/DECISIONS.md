@@ -160,6 +160,28 @@ policy; no GPL/LGPL/AGPL component may be added. The ImageSharp 4.1.3 exact pin,
 community key and their constraints are unchanged — see the existing entry above and
 GOTCHAS.md.
 
+## Vector-original CAD references are the geometry quality gate (2026-11-04)
+
+The CAD arc is judged against **vector-original CAD references** — drawings authored as
+exact vectors, rasterized for the tracer at controlled DPI presets (high / medium / low).
+Because the intended geometry is known exactly, acceptance is measured, not eyeballed:
+lines appear when measured (line presence) and become clean editable strokes with exactly
+two anchors; circles and supported arcs export as exact analytic entities where the
+source ink supports them — analytic CIRCLE / bulged VERTEX entities in DXF only; SVG/PDF
+render the same geometric curves (arc segmentation within tolerance) and gain no separate
+analytic CAD entity types; and text plus solid
+marks stay **filled and protected** — glyphs remain filled and legible and solid black
+blocks keep their interiors. The DPI ladder guards that recovery does not quietly depend
+on one scan resolution; a result must hold across the controlled variants, not only the
+convenient one. Current state on the primary clean600 case (2026-11-04, after the VEC-140
+merge): 23/27 line presence, 14/27 two-anchor strokes, 1/1 circle, 3/3 complete analytic
+arcs in DXF — measured counts on one controlled case, not a general success rate; hatch
+and dense-ink recovery (VEC-143) remains open. The historical 1913 pump sheet is a
+non-CAD-style scan sample from the text/solid conservatism measurement and is not the
+CAD gate.
+
+
+
 ## Hand-written exporters: PDF (VEC-49) and DXF R12 (VEC-54)
 
 **PDF:** `PdfWriter` is hand-written, zero-dependency and byte-deterministic — writing a

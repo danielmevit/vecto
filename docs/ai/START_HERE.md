@@ -5,17 +5,22 @@
 boundary is fitted once and shared by both adjacent regions, so the output has no gaps and
 no overlaps between shapes. C# / .NET 8 / WPF.
 
-**Current status:** v0.4.4 released 2026-10-15 (GitHub; Store update submitted by the owner); v0.4.3 was the previous release ($7.99 one-time,
+**Current status:** v0.4.4 released 2026-10-15 — the last locally verified release
+(GitHub; the owner reported the Store update submitted); v0.4.3 was the previous release
+($7.99 one-time was the price last locally verified,
 https://apps.microsoft.com/detail/9PM61P4NC8J2) and free/open-source on GitHub Releases;
 product site is Store-first at https://danielmevit.github.io/vecto/ (`site/`, deploys from
 `main`). Beyond the release, `dev` carries the unreleased CAD/PDF/DXF arc (Line art mode,
-centerline strokes, clean primitives, PDF in/out, DXF R12) — see CHANGELOG "Unreleased".
-Full snapshot in `STATUS.md`.
-**Current priority:** (1) CAD architecture reassessment — current engine priority, issue #1
-stays OPEN: a bounded architecture/evaluation pass (original-scan role/geometry references,
-automatic vs oracle-text-mask prototypes, coherent primitives, source-ink ownership) before
-another broad classification patch; no winner or completion estimate yet (see STATUS.md);
-(2) in-app "rate on the Store" review prompt — post-launch,
+centerline strokes, clean primitives, source-supported arc/attached-line recovery, PDF
+in/out, DXF R12) — see CHANGELOG "Unreleased". The accepted `dev` checkpoint is 394ebf6
+(2026-11-04): Windows Release 0 warnings / 0 errors, 379/379 .NET + 52/52 Python CAD
+reference checks. Full snapshot in `STATUS.md`.
+**Current priority:** (1) the modern CAD line/hatch gap — issue #1 stays OPEN:
+the vector-original CAD references at controlled DPI are the quality gate (DECISIONS.md,
+2026-11-04 — measured 23/27 line presence, 14/27 two-anchor, exact circle and analytic
+arcs, text/solid protection on the primary clean600 case), and the active VEC-143
+hatch-recovery task targets the still-filled hatch grids; no general success rate is
+claimed; (2) in-app "rate on the Store" review prompt — post-launch,
 highest leverage; (3) sub-pixel junction/corner relaxation — top engine-quality lever, see
 ROADMAP; plus Phase 4 UX: palette editor + tracing wizard, and tuning-backlog items as
 they bite.
