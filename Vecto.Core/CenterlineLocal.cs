@@ -250,7 +250,7 @@ public static partial class Centerline
 
     static void ExtractLocal(Comp c, int[] comp, bool[] skel, double[] widthAt, int[] dtSq, bool[] inkMask,
         int ink, double median, int pruneLen, int growLen,
-        EffectiveParams p, int w, int h, List<StrokePath> strokes)
+        EffectiveParams p, int w, int h, List<StrokePath> strokes, CancellationToken ct)
     {
         double thin = ThinFactor * median + ThinSlack;
         int minLen = (int)Math.Ceiling(LongFactor * median);
@@ -267,7 +267,7 @@ public static partial class Centerline
         // fragments. They are evidence for this local arc pass, never legacy strokes.
         foreach (int q in c.Pixels)
             if (skel[q] && tracer.Degree(q) == 0) chains.Add(([q], false));
-        var arcOwned = RecoverLocalArcs(chains, c.Id, comp, inkMask, widthAt, dtSq, thin, minLen, ink, w, h, strokes);
+        var arcOwned = RecoverLocalArcs(chains, c.Id, comp, inkMask, widthAt, dtSq, thin, minLen, ink, w, h, strokes, ct);
         foreach (var (pixels, closed) in chains)
         {
             if (arcOwned.Contains(pixels)) continue;

@@ -6,7 +6,7 @@ public static partial class Centerline
     // source cross-sections, rather than a successful fit alone, authorize every gap.
     static HashSet<List<int>> RecoverLocalArcs(List<(List<int> Pixels, bool Closed)> chains,
         int id, int[] comp, bool[] inkMask, double[] widthAt, int[] dtSq,
-        double thin, int minLen, int ink, int w, int h, List<StrokePath> strokes)
+        double thin, int minLen, int ink, int w, int h, List<StrokePath> strokes, CancellationToken ct)
     {
         const int cell = 8, maxCandidates = 512, maxSamples = 262144;
         var owned = new HashSet<List<int>>();
@@ -198,6 +198,11 @@ public static partial class Centerline
                     }
                     if (inside && onCircle * 2 >= run.Count) owned.Add(run);
                 }
+
+            // The merged band that forced this continuation also hides the straight side
+            // that made it. Explain that side from source as the other half of the union.
+            if (bridges.Count > 0)
+                RecoverAttachedSides(center, radius, start, sweep, width, bridges, chains, owned, At, thin, minLen, ink, w, strokes, ct);
 
             double Angle(Vec2 p) => DetMath.Atan2(p.Y - center.Y, p.X - center.X);
             // A near-tangent straight side paints over the circular band, so radial
@@ -516,6 +521,262 @@ public static partial class Centerline
             }
             return true;
         }
+    }
+
+    // Line+arc union at an accepted arc's merged band. Pixels there cannot say which
+    // primitive painted them, so the side is measured where it is alone: ink beyond the
+    // accepted arc's band, then thin centred cross-sections along its remote run. Only
+    // then is it extended back through the overlap, on source ink alone. Paper, foreign
+    // ink beside the union, a side that never reaches the arc band, a steep crossing or
+    // an uneven or curved run rejects the hypothesis and leaves dev's output (chains and
+    // fill) untouched. The near end cannot be observed exactly: it is the arc join, or
+    // earlier if ink outside the arc's own band still shows the side there.
+    static void RecoverAttachedSides(Vec2 center, double radius, double start, double sweep, double arcWidth,
+        List<(double Lo, double Hi)> bridges, List<(List<int> Pixels, bool Closed)> chains, HashSet<List<int>> owned,
+        Func<Vec2, bool> at, double thin, int minLen, int ink, int w, List<StrokePath> strokes, CancellationToken ct)
+    {
+        const int maxResidual = 1 << 14, maxClusters = 4;
+        const double maxCrossing = .42; // about 25 degrees between side and arc tangent
+        int budget = 1 << 21, clusters = 0;
+        double band = arcWidth / 2 + 1.5, cross = Math.Sqrt(2 * radius * arcWidth);
+        double reach = Math.Max(3 * cross, 16 * arcWidth), limit = Math.Max(thin, 3 * arcWidth);
+        Vec2 Radial(double a) => new(DetMath.Cos(a), DetMath.Sin(a));
+        Vec2 Center(int q) => new(q % w + .5, q / w + .5);
+        bool Ink(Vec2 p) => --budget >= 0 && at(p);
+        var seen = new HashSet<int>();
+        var accepted = new List<(Vec2 A, Vec2 B, double Width)>();
+        foreach (var (lo, hi) in bridges)
+        {
+            var origin = center + Radial((lo + hi) / 2) * radius;
+            double margin = cross / radius;
+            for (double a = lo - margin; a <= hi + margin; a += .5 / radius)
+                for (int side = -1; side <= 1; side += 2)
+                    for (double o = band + .5; o <= band + arcWidth; o += 1)
+                    {
+                        var p = center + Radial(a) * (radius + side * o);
+                        int seed = (int)p.Y * w + (int)p.X;
+                        if (!Ink(p) || !seen.Add(seed)) continue;
+                        if (clusters++ >= maxClusters) return;
+                        ct.ThrowIfCancellationRequested();
+                        var far = Residual(seed, origin);
+                        if (far != null && Measure(far, origin, out var near, out var remote, out double width))
+                        {
+                            strokes.Add(new StrokePath { PaletteIndex = ink, Width = width, Closed = false,
+                                Segments = [CubicBezier.Line(remote, near)] });
+                            accepted.Add((near, remote, width));
+                        }
+                    }
+        }
+        if (accepted.Count == 0) return;
+        // Ridges the union explains must not also emit: no partial duplicate of the side.
+        foreach (var (run, closed) in chains)
+        {
+            if (closed || owned.Contains(run)) continue;
+            if (run.All(q => Explained(Center(q)))) owned.Add(run);
+        }
+
+        bool Explained(Vec2 p)
+        {
+            double along = Delta(DetMath.Atan2(p.Y - center.Y, p.X - center.X) - start) * Math.Sign(sweep);
+            if (along < 0) along += 2 * Math.PI;
+            if (along <= Math.Abs(sweep) && Math.Abs((p - center).Length - radius) <= band) return true;
+            foreach (var (a, b, width) in accepted)
+            {
+                var d = (b - a).Normalized();
+                double t = (p - a).Dot(d);
+                if (t >= -width && t <= (b - a).Length + width && Math.Abs(Cross(p - a, d)) <= width / 2 + 1.5) return true;
+            }
+            return false;
+        }
+
+        // Bounded flood over ink beyond the arc's band; returns the pixels clear of it.
+        List<Vec2>? Residual(int seed, Vec2 origin)
+        {
+            var queue = new Queue<int>();
+            var far = new List<Vec2>();
+            queue.Enqueue(seed);
+            int visited = 0;
+            while (queue.Count > 0)
+            {
+                int q = queue.Dequeue();
+                if (++visited > maxResidual) return null; // a solid, not a side
+                var p = Center(q);
+                if (Math.Abs((p - center).Length - radius) >= 1.5 * arcWidth) far.Add(p);
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        var n = p + new Vec2(dx, dy);
+                        int index = (int)n.Y * w + (int)n.X;
+                        if (n.X < 0 || n.Y < 0 || seen.Contains(index) || !Ink(n) ||
+                            Math.Abs((n - center).Length - radius) <= band || (n - origin).Length > reach) continue;
+                        seen.Add(index);
+                        queue.Enqueue(index);
+                    }
+            }
+            return far;
+        }
+
+        bool Measure(List<Vec2> far, Vec2 origin, out Vec2 nearPoint, out Vec2 remotePoint, out double width)
+        {
+            nearPoint = remotePoint = default;
+            width = 0;
+            if (far.Count < 4 * arcWidth * arcWidth || !Principal(far, out var m, out var d, out double elongation) || elongation < 9) return false;
+            if ((m - origin).Dot(d) < 0) d = d * -1;
+            double lo = far.Min(p => (p - m).Dot(d)), hi = far.Max(p => (p - m).Dot(d));
+            for (int pass = 0; pass < 3; pass++)
+            {
+                var (centers, widths) = Sections(m, d, lo, hi);
+                if (centers.Count < .8 * (hi - lo) || centers.Count < 4 * arcWidth || !Principal(centers, out m, out var refined, out _)) return false;
+                d = refined.Dot(d) < 0 ? refined * -1 : refined;
+                width = Median(widths);
+                if (width < 2 || width > thin) return false;
+                widths.Sort();
+                if (widths[widths.Count / 10] < width - Math.Max(2, .15 * width) ||
+                    widths[widths.Count * 9 / 10] > width + Math.Max(2, .15 * width)) return false;
+                lo = centers.Min(p => (p - m).Dot(d));
+                hi = centers.Max(p => (p - m).Dot(d));
+                // Follow the thin run to its real remote end: the long lever arm is the fit.
+                double full = hi, tip = hi;
+                for (double t = hi + .5; t <= hi + 8192; t += .5)
+                {
+                    double value = Across(m + d * t, d, out double shift);
+                    if (value <= 0 || !at(m + d * t)) break;
+                    if (Math.Abs(value - width) > Math.Max(2.5, .15 * width) || Math.Abs(shift) > 2)
+                    {
+                        // Past a narrowing cap, or a contaminated section: only a cap may follow.
+                        if (t - tip > width) break;
+                        continue;
+                    }
+                    tip = t;
+                    if (value >= width - 1) full = t;
+                }
+                hi = tip;
+                var all = Sections(m, d, lo, hi);
+                if (all.Centers.Count < .9 * (hi - lo) || !Principal(all.Centers, out m, out refined, out _)) return false;
+                d = refined.Dot(d) < 0 ? refined * -1 : refined;
+                if (all.Centers.Any(p => Math.Abs(Cross(p - m, d)) > .85)) return false;
+                lo = all.Centers.Min(p => (p - m).Dot(d));
+                hi = all.Centers.Max(p => (p - m).Dot(d));
+                if (pass < 2) continue;
+                if (hi - lo < Math.Max(minLen, 8 * width)) return false;
+                // Backward through the overlap. Overlap is allowed; paper and ink that
+                // neither primitive explains stop the walk.
+                double walk = lo, evidence = lo, halfWidth = width / 2, inset = Math.Max(.5, halfWidth - 1);
+                double furthest = lo - 4 * reach;
+                for (double t = lo - .5; t >= furthest; t -= .5)
+                {
+                    var q = m + d * t;
+                    var normal = new Vec2(-d.Y, d.X);
+                    if (!Ink(q) || !Ink(q + normal * inset) || !Ink(q - normal * inset) || Foreign(q, normal)) break;
+                    walk = t;
+                    foreach (double s in new[] { -1.0, 1 })
+                    {
+                        var edge = q + normal * (s * (halfWidth - .75));
+                        if (Ink(edge) && Math.Abs((edge - center).Length - radius) > arcWidth / 2 + 1) evidence = t;
+                    }
+                }
+                // Geometric join: the line's backward crossing of the circle, else its foot.
+                var from = m - center;
+                double b = from.Dot(d), disc = b * b - from.LengthSq + radius * radius;
+                double back = disc >= 0 ? -b - Math.Sqrt(disc) : -b;
+                var joint = m + d * back;
+                if (Math.Abs((joint - center).Length - radius) > (arcWidth + width) / 2) return false;
+                if (Math.Abs((joint - center).Normalized().Dot(d)) > maxCrossing) return false;
+                var reached = m + d * walk;
+                if (Math.Abs((reached - center).Length - radius) > (arcWidth + width) / 2) return false;
+                if (!InsideSweep(joint) && !InsideSweep(reached)) return false;
+                double near = Math.Max(walk, Math.Min(back, evidence));
+                // A butt end has full sections up to its edge; a round one tapers past them.
+                double painted = hi;
+                while (painted < hi + width && Ink(m + d * (painted + .5))) painted += .5;
+                double remote = painted - full >= width / 4 ? Math.Max(painted - halfWidth, hi - halfWidth) : full;
+                remote = Math.Min(remote, hi);
+                if (remote - near < Math.Max(minLen, 8 * width)) return false;
+                int samples = 0, paper = 0;
+                for (double t = near; t <= remote; t += .5)
+                    for (double o = -inset; o <= inset; o += 1)
+                    {
+                        samples++;
+                        if (!Ink(m + d * t + new Vec2(-d.Y, d.X) * o)) paper++;
+                    }
+                if (budget < 0 || paper > samples * .01) return false;
+                nearPoint = m + d * near;
+                remotePoint = m + d * remote;
+                return true;
+            }
+            return false;
+
+            bool InsideSweep(Vec2 p)
+            {
+                double along = Delta(DetMath.Atan2(p.Y - center.Y, p.X - center.X) - start) * Math.Sign(sweep);
+                if (along < 0) along += 2 * Math.PI;
+                return along <= Math.Abs(sweep);
+            }
+        }
+
+        // The union's only explained thick section is the arc band beside the line.
+        bool Foreign(Vec2 q, Vec2 normal)
+        {
+            foreach (double s in new[] { -1.0, 1 })
+            {
+                double o = 0;
+                while (o <= limit && Ink(q + normal * (s * o))) o += .5;
+                if (o > limit) return true;
+                var last = q + normal * (s * (o - .5));
+                if (o - .5 > limit / 2 && Math.Abs((last - center).Length - radius) > band) return true;
+            }
+            return false;
+        }
+
+        double Across(Vec2 q, Vec2 d, out double shift)
+        {
+            shift = 0;
+            var normal = new Vec2(-d.Y, d.X);
+            double inside = 0, outside = 0;
+            while (inside <= limit && Ink(q - normal * inside)) inside += .5;
+            while (outside <= limit && Ink(q + normal * outside)) outside += .5;
+            if (inside == 0 || outside == 0 || inside > limit || outside > limit) return 0;
+            shift = (outside - inside) / 2;
+            return inside + outside - .5;
+        }
+
+        (List<Vec2> Centers, List<double> Widths) Sections(Vec2 m, Vec2 d, double lo, double hi)
+        {
+            var centers = new List<Vec2>();
+            var widths = new List<double>();
+            var normal = new Vec2(-d.Y, d.X);
+            // A long run can hold 8192 sections at most, in keeping with the walk bound.
+            for (double t = lo; t <= hi && centers.Count < 8192; t += 1)
+            {
+                var q = m + d * t;
+                double value = Across(q, d, out double shift);
+                if (value <= 0 || value > thin + 2) continue;
+                centers.Add(q + normal * shift);
+                widths.Add(value);
+            }
+            return (centers, widths);
+        }
+    }
+
+    // Major axis of a point set; elongation is its variance ratio.
+    static bool Principal(List<Vec2> points, out Vec2 mean, out Vec2 axis, out double elongation)
+    {
+        mean = axis = default;
+        elongation = 0;
+        if (points.Count < 2) return false;
+        foreach (var p in points) mean = mean + p;
+        mean = mean * (1.0 / points.Count);
+        double xx = 0, xy = 0, yy = 0;
+        foreach (var p in points)
+        {
+            var v = p - mean;
+            xx += v.X * v.X; xy += v.X * v.Y; yy += v.Y * v.Y;
+        }
+        double angle = .5 * DetMath.Atan2(2 * xy, xx - yy), root = Math.Sqrt((xx - yy) * (xx - yy) + 4 * xy * xy);
+        axis = new Vec2(DetMath.Cos(angle), DetMath.Sin(angle));
+        double major = (xx + yy + root) / 2, minor = (xx + yy - root) / 2;
+        elongation = major / Math.Max(minor, 1e-9);
+        return major > 0;
     }
 
     static double Cross(Vec2 a, Vec2 b) => a.X * b.Y - a.Y * b.X;
