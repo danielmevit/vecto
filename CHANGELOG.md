@@ -2,13 +2,18 @@
 
 ## Unreleased
 
+- **More of a CAD line attached to an arc stays editable.** In Line art mode, a
+  source-supported near-tangent straight side can now cross a merged ink band
+  and export as one weighted two-anchor line beside an analytic arc. On the
+  controlled fixture, the line reaches its intended endpoints; the existing
+  600-DPI CAD reference's entity counts remain unchanged. This recovery runs
+  only when the arc continuation is accepted.
 - **Long CAD arcs can pass close straight-line joins as one editable curve.**
   Line art mode follows a source-supported circle through the merged ink and
   owns its far-side ridge, avoiding a second overlapping curved stroke. A
   controlled arc from −90° to +90° now exports as one analytic arc; genuine
-  gaps, crossings and mismatched curves remain separate. The attached straight
-  line can still be partly filled, and the main 600-DPI CAD reference's measured
-  line and arc counts are unchanged.
+  gaps, crossings and mismatched curves remain separate. The main 600-DPI CAD
+  reference's measured line and arc counts are unchanged.
 - **More connected CAD geometry becomes editable.** Line art mode now recovers
   source-supported circles, arcs and straight strokes inside mixed drawings,
   joins nearby linework and keeps uncovered ink as fill. On the controlled
