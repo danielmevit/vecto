@@ -126,27 +126,116 @@ public class CenterlineLocalArcTests
     [Theory]
     [InlineData("backward-foot", 0, 0)]
     [InlineData("backward-foot", 23, .35)]
+    [InlineData("backward-foot", 78, .35)]
     [InlineData("near-crossing", 0, 0)]
     [InlineData("near-crossing", 23, .35)]
-    public void CrossingKeepsUnexplainedArcInkWithoutClaimingCompleteTangent(string kind, double rotation, double phase)
+    [InlineData("near-crossing", 45, 0)]
+    [InlineData("near-crossing", 78, .35)]
+    public void NearTangentSideDoesNotTruncateAContinuingSourceArc(string kind, double rotation, double phase)
     {
+        // The source draws one r100 arc from -90 to +45 deg; a straight side grazes
+        // it near 0 deg and paints over the circular band. The arc must continue
+        // through that merged band to its real source end, as one analytic arc.
         var fixture = Make(true, 1, rotation, 100, 10, kind, phase);
-        var target = fixture.Targets[0];
-        // A crossing can split the recoverable ridge. It must not turn the nearby
-        // line's foot into a false tangent endpoint; unexplained ink stays filled.
-        var candidates = fixture.Doc.Strokes.Where(s => !s.Closed && s.Segments.Count > 0 &&
-            s.Segments.All(g => !g.IsLine(.05)) &&
-            s.Segments.SelectMany(g => new[] { g.P0, g.Eval(.5), g.P3 })
-                .All(p => Math.Abs((p - target.Center).Length - 100) < 2)).ToList();
-        Assert.NotEmpty(candidates);
-        // The crossing interrupts uniform cross-sections. Do not invent a
-        // complete tangent-connected arc across that ambiguous interval.
-        Assert.DoesNotContain(candidates, s => Covers(s, target.Center,
-            -Math.PI / 2 + rotation * Math.PI / 180, 3 * Math.PI / 4, 100));
-        double end = 35 * Math.PI / 180 + rotation * Math.PI / 180;
-        var expected = target.Center + new Vec2(Math.Cos(end), Math.Sin(end)) * 100;
+        var center = fixture.Targets[0].Center;
+        double start = -Math.PI / 2 + rotation * Math.PI / 180, sweep = 135 * Math.PI / 180;
+        var stroke = Assert.Single(fixture.Doc.Strokes, s => Covers(s, center, start, sweep, 100));
+        Assert.All(stroke.Segments, g => Assert.False(g.IsLine(.05)));
+        double signed = AssertEndpoints(stroke, center, start, sweep, 100, 1);
+        AssertAnalyticExport(fixture.Doc, stroke, center, 100, signed);
+        // At least 30 deg beyond the straight side's tangent foot.
+        double foot = (kind == "near-crossing" ? -Math.Atan(.1) : 0) + rotation * Math.PI / 180;
+        double reach = Math.Max(Angle(stroke.Segments[0].P0), Angle(stroke.Segments[^1].P3));
+        Assert.InRange(reach * 180 / Math.PI, 30, 180);
+        double Angle(Vec2 p) => Math.Atan2(Math.Sin(Math.Atan2(p.Y - center.Y, p.X - center.X) - foot),
+            Math.Cos(Math.Atan2(p.Y - center.Y, p.X - center.X) - foot));
         var rendered = Rasterizer.Render(fixture.Doc);
-        Assert.True(rendered.GetPixel((int)expected.X, (int)expected.Y).R < 128);
+        int source = 0, lost = 0;
+        for (int y = 0; y < fixture.Source.Height; y++)
+            for (int x = 0; x < fixture.Source.Width; x++)
+                if (fixture.Source.GetPixel(x, y).R < 128)
+                {
+                    source++;
+                    if (rendered.GetPixel(x, y).R >= 128) lost++;
+                }
+        // Rotated straight sides still lose some ink they did on dev (measured
+        // 3.5%/4.2% before this change at 23/45 deg); the arc itself must not add loss.
+        Assert.InRange(lost / (double)source, 0, rotation % 78 == 0 ? .025 : .045);
+        Assert.True(rendered.GetPixel((int)fixture.Solid.X, (int)fixture.Solid.Y).R < 128);
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(23, .35)]
+    [InlineData(78, .35)]
+    public void ArcContinuingFarPastANearTangentSideIsOneUnduplicatedPrimitive(double rotation, double phase)
+    {
+        // One continuous source circle from -90 to +90 deg, rasterized in one pass,
+        // with a straight side grazing it near 0 deg. The far ridge beyond the merged
+        // band belongs to the same arc: one analytic arc, no overlapping second curve.
+        var fixture = Make(true, 1, rotation, 100, 10, "extended", phase);
+        var center = fixture.Targets[0].Center;
+        double start = -Math.PI / 2 + rotation * Math.PI / 180, sweep = Math.PI;
+        var stroke = Assert.Single(fixture.Doc.Strokes, s => Covers(s, center, start, sweep, 100));
+        Assert.All(stroke.Segments, g => Assert.False(g.IsLine(.05)));
+        double signed = AssertEndpoints(stroke, center, start, sweep, 100, 1);
+        AssertAnalyticExport(fixture.Doc, stroke, center, 100, signed);
+        // No other curved stroke may retrace any 10 deg stretch of the same circle.
+        // (At 0 deg a short straight stub at the -90 deg tangent junction is not a curve.)
+        foreach (var other in fixture.Doc.Strokes.Where(s => s != stroke && !s.Segments.All(g => g.IsLine(.5))))
+        {
+            var samples = other.Segments.SelectMany(g => Enumerable.Range(0, 21).Select(i => g.Eval(i / 20.0)))
+                .Where(p => Math.Abs((p - center).Length - 100) <= 3).ToList();
+            var angles = samples.Select(p => Math.Atan2(p.Y - center.Y, p.X - center.X)).Order().ToList();
+            Assert.True(angles.Count < 2 || (angles[^1] - angles[0]) * 180 / Math.PI < 10,
+                $"duplicate curve on the arc circle: {string.Join(",", angles.Select(a => Math.Round(a * 180 / Math.PI)))}");
+        }
+        var rendered = Rasterizer.Render(fixture.Doc);
+        int source = 0, lost = 0;
+        for (int y = 0; y < fixture.Source.Height; y++)
+            for (int x = 0; x < fixture.Source.Width; x++)
+                if (fixture.Source.GetPixel(x, y).R < 128)
+                {
+                    source++;
+                    if (rendered.GetPixel(x, y).R >= 128) lost++;
+                }
+        Assert.InRange(lost / (double)source, 0, rotation % 78 == 0 ? .025 : .045);
+        Assert.True(rendered.GetPixel((int)fixture.Solid.X, (int)fixture.Solid.Y).R < 128);
+    }
+
+    [Theory]
+    [InlineData("nc-gap", 0, 0)]
+    [InlineData("nc-gap", 23, .35)]
+    [InlineData("nc-cross", 0, 0)]
+    [InlineData("nc-cross", 78, .35)]
+    [InlineData("nc-parallel", 0, 0)]
+    [InlineData("nc-parallel", 23, .35)]
+    [InlineData("nc-wall", 0, 0)]
+    [InlineData("nc-wall", 78, .35)]
+    [InlineData("nc-radius", 0, 0)]
+    [InlineData("nc-radius", 23, .35)]
+    public void UnsupportedFarSideDoesNotExtendTheArcPastItsFoot(string kind, double rotation, double phase)
+    {
+        // Same near-tangent junction, but the far side is a gap, a transverse
+        // crossing, a parallel side, a filled wall or a different radius. No
+        // continuation may be invented; the far source ink stays painted.
+        var fixture = Make(true, 1, rotation, 100, 10, kind, phase);
+        var center = fixture.Targets[0].Center;
+        double r = rotation * Math.PI / 180, foot = -Math.Atan(.1) + r;
+        Assert.DoesNotContain(fixture.Doc.Strokes, s => Covers(s, center, foot, 40 * Math.PI / 180, 100));
+        var rendered = Rasterizer.Render(fixture.Doc);
+        Vec2 At(double degrees, double radius) => center +
+            new Vec2(Math.Cos(degrees * Math.PI / 180 + r), Math.Sin(degrees * Math.PI / 180 + r)) * radius;
+        var kept = kind switch
+        {
+            "nc-gap" => At(40, 100),
+            "nc-cross" => At(15, 118),
+            "nc-parallel" => At(0, 86),
+            "nc-wall" => At(27, 100),
+            _ => At(35, 107),
+        };
+        Assert.True(rendered.GetPixel((int)kept.X, (int)kept.Y).R < 128);
+        Assert.True(rendered.GetPixel((int)fixture.Solid.X, (int)fixture.Solid.Y).R < 128);
     }
 
     [Theory]
@@ -174,6 +263,7 @@ public class CenterlineLocalArcTests
                 }
         Assert.InRange(lost / (double)source, 0, .025);
     }
+
 
     static void AssertAnalyticExport(VectorDocument doc, StrokePath stroke, Vec2 center, double radius, double signed)
     {
@@ -290,11 +380,37 @@ public class CenterlineLocalArcTests
                     ink = (q.X >= 0 && q.Y <= 0 && Math.Abs(q.Length - radius) <= width / 2) ||
                         (p.X >= 150 && p.X <= 320 && Math.Abs(q.Y + radius) <= width / 2) ||
                         (p.Y >= 320 && p.Y <= 500 && Math.Abs(q.X - radius) <= width / 2);
-                    if (kind is "backward-foot" or "near-crossing" or "tangent-foot")
+                    if (kind.StartsWith("nc-", StringComparison.Ordinal))
+                    {
+                        double a = Math.Atan2(q.Y, q.X), d = q.Length - radius;
+                        bool annulus = Math.Abs(d) <= width / 2;
+                        bool side = p.Y >= 300 && p.Y <= 500 && Math.Abs(q.X - radius - q.Y * .1) <= width / 2;
+                        double lineDistance = Math.Abs(q.X - radius - q.Y * .1) / Math.Sqrt(1.01);
+                        double end = kind == "nc-cross" || kind == "nc-parallel" ? -Math.Atan(.1) : 45 * Math.PI / 180;
+                        if (kind == "nc-radius") end = 20 * Math.PI / 180;
+                        bool arc = a >= -Math.PI / 2 && a <= end && annulus;
+                        if (kind == "nc-cross") arc = a >= -Math.PI / 2 && a <= 20 * Math.PI / 180 && annulus;
+                        if (kind == "nc-gap" && a >= 28 * Math.PI / 180 && a <= 34 * Math.PI / 180 && lineDistance > 7) arc = false;
+                        ink = arc || side ||
+                            (p.X >= 150 && p.X <= 320 && Math.Abs(q.Y + radius) <= width / 2);
+                        if (kind == "nc-cross")
+                        {
+                            var n = new Vec2(Math.Cos(15 * Math.PI / 180), Math.Sin(15 * Math.PI / 180));
+                            ink |= Math.Abs(Cross(q, n)) <= width / 2 && q.Dot(n) >= radius - 25 && q.Dot(n) <= radius + 25;
+                        }
+                        if (kind == "nc-parallel")
+                            ink |= p.Y >= 300 && p.Y <= 500 && Math.Abs(q.X - radius + 14 - q.Y * .1) <= width / 2;
+                        if (kind == "nc-wall")
+                            ink |= a >= 18 * Math.PI / 180 && a <= 34 * Math.PI / 180 && q.Length >= radius - 18 && q.Length <= radius + 16;
+                        if (kind == "nc-radius")
+                            ink |= a >= 20 * Math.PI / 180 && a <= 45 * Math.PI / 180 && Math.Abs(q.Length - radius - 7) <= width / 2;
+                    }
+                    if (kind is "backward-foot" or "near-crossing" or "tangent-foot" or "extended")
                     {
                         double a = Math.Atan2(q.Y, q.X);
-                        double tilt = kind is "near-crossing" or "tangent-foot" ? .10 : 0;
-                        ink = (a >= -Math.PI / 2 && a <= (kind == "tangent-foot" ? -Math.Atan(tilt) : 45 * Math.PI / 180) &&
+                        double tilt = kind is "near-crossing" or "tangent-foot" or "extended" ? .10 : 0;
+                        double arcEnd = kind switch { "tangent-foot" => -Math.Atan(tilt), "extended" => Math.PI / 2, _ => 45 * Math.PI / 180 };
+                        ink = (a >= -Math.PI / 2 && a <= arcEnd &&
                             Math.Abs(q.Length - radius) <= width / 2) ||
                             (p.X >= 150 && p.X <= 320 && Math.Abs(q.Y + radius) <= width / 2) ||
                             (p.Y >= 300 && p.Y <= 500 && Math.Abs(q.X - radius * (kind == "tangent-foot" ? Math.Sqrt(1 + tilt * tilt) : 1) - q.Y * tilt) <= width / 2);
@@ -323,6 +439,8 @@ public class CenterlineLocalArcTests
             }
         return (Tracer.Trace(image, new TraceOptions { Style = ImageStyle.LineArt }).Document, targets, Map(new Vec2(320, 140)), image);
     }
+
+    static double Cross(Vec2 a, Vec2 b) => a.X * b.Y - a.Y * b.X;
 
     static T Dxf<T>(string name, params object[] args) =>
         (T)typeof(DxfWriterTests).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, args)!;
