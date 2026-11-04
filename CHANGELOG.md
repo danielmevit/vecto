@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **CAD status and evaluation guides updated.** The AI orientation now records
+  the accepted modern vector-original CAD measurements, the remaining hatch
+  and two-anchor gap, and the rule that text and solid marks stay filled.
+  Release and Store details are marked as dated local observations.
 - **More of a CAD line attached to an arc stays editable.** In Line art mode, a
   source-supported near-tangent straight side can now cross a merged ink band
   and export as one weighted two-anchor line beside an analytic arc. On the
