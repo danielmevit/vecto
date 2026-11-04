@@ -555,11 +555,12 @@ public static partial class Centerline
                     {
                         var p = center + Radial(a) * (radius + side * o);
                         int seed = (int)p.Y * w + (int)p.X;
-                        if (!Ink(p) || !seen.Add(seed)) continue;
-                        if (clusters++ >= maxClusters) return;
+                        if (clusters >= maxClusters || !Ink(p) || !seen.Add(seed)) continue;
+                        clusters++;
                         ct.ThrowIfCancellationRequested();
                         var far = Residual(seed, origin);
-                        if (far != null && Measure(far, origin, out var near, out var remote, out double width))
+                        if (far != null && Measure(far, origin, out var near, out var remote, out double width) &&
+                            !Conflicting(near, remote, width))
                         {
                             strokes.Add(new StrokePath { PaletteIndex = ink, Width = width, Closed = false,
                                 Segments = [CubicBezier.Line(remote, near)] });
@@ -575,16 +576,37 @@ public static partial class Centerline
             if (run.All(q => Explained(Center(q)))) owned.Add(run);
         }
 
-        bool Explained(Vec2 p)
+        bool Explained(Vec2 p) => OnArc(p) || accepted.Any(l => OnLine(p, l.A, l.B, l.Width));
+        bool OnArc(Vec2 p) => InSweep(p) && Math.Abs((p - center).Length - radius) <= band;
+        static bool OnLine(Vec2 p, Vec2 a, Vec2 b, double width)
+        {
+            var d = (b - a).Normalized();
+            double t = (p - a).Dot(d);
+            return t >= -width && t <= (b - a).Length + width && Math.Abs(Cross(p - a, d)) <= width / 2 + 1.5;
+        }
+        bool InSweep(Vec2 p)
         {
             double along = Delta(DetMath.Atan2(p.Y - center.Y, p.X - center.X) - start) * Math.Sign(sweep);
             if (along < 0) along += 2 * Math.PI;
-            if (along <= Math.Abs(sweep) && Math.Abs((p - center).Length - radius) <= band) return true;
-            foreach (var (a, b, width) in accepted)
+            return along <= Math.Abs(sweep);
+        }
+        // A side already explained, or a ridge running along it and on past what the union
+        // explains (a weight change, say), would retrace it: leave that to the chain.
+        bool Conflicting(Vec2 near, Vec2 remote, double width)
+        {
+            var mid = near + (remote - near) * .5;
+            if (accepted.Any(l => OnLine(mid, l.A, l.B, l.Width))) return true;
+            foreach (var (run, closed) in chains)
             {
-                var d = (b - a).Normalized();
-                double t = (p - a).Dot(d);
-                if (t >= -width && t <= (b - a).Length + width && Math.Abs(Cross(p - a, d)) <= width / 2 + 1.5) return true;
+                if (closed || owned.Contains(run)) continue;
+                int along = 0, beyond = 0;
+                foreach (int q in run)
+                {
+                    var p = Center(q);
+                    if (OnLine(p, near, remote, width)) along++;
+                    else if (!OnArc(p) && !accepted.Any(l => OnLine(p, l.A, l.B, l.Width))) beyond++;
+                }
+                if (along >= 3 * width && beyond > width) return true;
             }
             return false;
         }
@@ -651,12 +673,14 @@ public static partial class Centerline
                     if (value >= width - 1) full = t;
                 }
                 hi = tip;
+                var fullPoint = m + d * full;
                 var all = Sections(m, d, lo, hi);
                 if (all.Centers.Count < .9 * (hi - lo) || !Principal(all.Centers, out m, out refined, out _)) return false;
                 d = refined.Dot(d) < 0 ? refined * -1 : refined;
                 if (all.Centers.Any(p => Math.Abs(Cross(p - m, d)) > .85)) return false;
                 lo = all.Centers.Min(p => (p - m).Dot(d));
                 hi = all.Centers.Max(p => (p - m).Dot(d));
+                full = Math.Min((fullPoint - m).Dot(d), hi);
                 if (pass < 2) continue;
                 if (hi - lo < Math.Max(minLen, 8 * width)) return false;
                 // Backward through the overlap. Overlap is allowed; paper and ink that
@@ -684,7 +708,7 @@ public static partial class Centerline
                 if (Math.Abs((joint - center).Normalized().Dot(d)) > maxCrossing) return false;
                 var reached = m + d * walk;
                 if (Math.Abs((reached - center).Length - radius) > (arcWidth + width) / 2) return false;
-                if (!InsideSweep(joint) && !InsideSweep(reached)) return false;
+                if (!InSweep(joint) && !InSweep(reached)) return false;
                 double near = Math.Max(walk, Math.Min(back, evidence));
                 // A butt end has full sections up to its edge; a round one tapers past them.
                 double painted = hi;
@@ -705,13 +729,6 @@ public static partial class Centerline
                 return true;
             }
             return false;
-
-            bool InsideSweep(Vec2 p)
-            {
-                double along = Delta(DetMath.Atan2(p.Y - center.Y, p.X - center.X) - start) * Math.Sign(sweep);
-                if (along < 0) along += 2 * Math.PI;
-                return along <= Math.Abs(sweep);
-            }
         }
 
         // The union's only explained thick section is the arc band beside the line.
