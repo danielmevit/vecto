@@ -166,8 +166,10 @@ The CAD arc is judged against **vector-original CAD references** — drawings au
 exact vectors, rasterized for the tracer at controlled DPI presets (high / medium / low).
 Because the intended geometry is known exactly, acceptance is measured, not eyeballed:
 lines appear when measured (line presence) and become clean editable strokes with exactly
-two anchors; circles and supported arcs export as exact analytic entities (CIRCLE /
-bulged VERTEX in DXF, arc segmentation within tolerance in SVG/PDF); and text plus solid
+two anchors; circles and supported arcs export as exact analytic entities where the
+source ink supports them — analytic CIRCLE / bulged VERTEX entities in DXF only; SVG/PDF
+render the same geometric curves (arc segmentation within tolerance) and gain no separate
+analytic CAD entity types; and text plus solid
 marks stay **filled and protected** — glyphs remain filled and legible and solid black
 blocks keep their interiors. The DPI ladder guards that recovery does not quietly depend
 on one scan resolution; a result must hold across the controlled variants, not only the

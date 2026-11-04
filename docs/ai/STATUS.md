@@ -4,10 +4,12 @@ Point-in-time status for any agent picking up Vecto. Living orientation is in
 `START_HERE.md`; this file is "where things stand right now."
 
 ## Shipped / live
-- **v0.4.4 is the current release** (2026-10-15: navy app icon, in-app tips, light tints
-  kept, AGPL-3.0 relicense — see CHANGELOG). v0.4.3 (tracing quality round) was the
-  previous release. GitHub Releases carry app + CLI + MSIX + cross-platform CLI binaries.
-  No release beyond v0.4.4 exists or is claimed.
+- **v0.4.4 — last locally verified release (as of 2026-11-04)**: released 2026-10-15
+  (navy app icon, in-app tips, light tints kept, AGPL-3.0 relicense — see CHANGELOG).
+  v0.4.3 (tracing quality round) was the previous release. GitHub Releases carry app +
+  CLI + MSIX + cross-platform CLI binaries. This is a dated last-verified claim; no
+  release beyond v0.4.4 was known or claimed here as of 2026-11-04, and the existence
+  or non-existence of any newer release was not independently re-verified.
 - **Microsoft Store listing**: https://apps.microsoft.com/detail/9PM61P4NC8J2 (Store ID
   `9PM61P4NC8J2`) — the owner reported the v0.4.4 update submitted to the Store, and
   **$7.99** one-time is the price last locally verified (v0.4.3 era). Nothing newer about
@@ -15,15 +17,20 @@ Point-in-time status for any agent picking up Vecto. Living orientation is in
 - Also **free and open source (AGPL-3.0-only from v0.4.4; v0.4.3 and earlier MIT)** — the same app is downloadable free from GitHub Releases, and the source builds it. The Store purchase buys convenience: one-click, auto-updating, signed install, and it supports development.
 - **Product site is Store-first**, live at https://danielmevit.github.io/vecto/ (deploys from `main` via `.github/workflows/deploy.yml`). The site is the **github.io** URL — `vecto.app` is an unrelated parking page, not this project.
 - **Dev-only shipped stages (merged to `dev`, NOT released; accepted `dev` base is
-  394ebf6, 2026-11-04: Claude lead gate on the merged VEC-140 attached-line tree)**:
+  394ebf6, 2026-11-04: Codex lead gate on the merged VEC-140 attached-line tree — the
+  Codex lead integrated and reviewed the Claude-authored VEC-140 implementation, with an
+  independent Antigravity review of the current tree and the recorded build/tests)**:
   the whole CAD/PDF/DXF arc — Line art scan mode (Sauvola), CAD centerline strokes
   (Stage 2), clean primitives + angle rationalization (Stage 3), source-supported arc
   continuation and attached-line recovery (VEC-134/140), huge-sheet scaling, PDF input
   (CLI + app), PDF export, and DXF R12 export. Lead-verified gate on this tree: Windows
   Release build 0 warnings / 0 errors, 379/379 .NET tests, 52/52 Python `cad_reference`
   checks, CodeGraph synced. See CHANGELOG "Unreleased" and
-  `docs/ai/reviews/2026-10-19-cad-pdf-handoff.md`; the VEC-140 assessment is
-  `coord/reports/VEC-140-LEAD-ASSESSMENT-2026-11-04.md` (outside the repo).
+  `docs/ai/reviews/2026-10-19-cad-pdf-handoff.md`; the VEC-140 lead assessment is
+  recorded in the external Unio coordination workspace as
+  `coord/reports/VEC-140-LEAD-ASSESSMENT-2026-11-04.md` — an external workspace path,
+  not a repo-relative link (no sibling `coord/` directory exists inside the repo,
+  so a plain `coord/reports/…` link would not resolve from `docs/ai/`).
   **All of it is unreleased.**
 
 ## Next
