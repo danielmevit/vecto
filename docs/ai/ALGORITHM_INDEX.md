@@ -84,6 +84,21 @@ faithful independent SVG renderer.
 - An anti-aliased axis-aligned box with sub-pixel borders traces to exactly 4 lines that
   are *exactly* horizontal/vertical (1e-6) at the encoded sub-pixel positions (±0.2 px).
 
+VEC143 fragmented hatch members (`Centerline.ProposeHatchMembers`, LineArt local path only): a
+one-pixel source width step leaves no ridge local maximum, so a drawn line can trace as crumb,
+main chain and crumb, and the main chain alone can miss the unchanged length gate
+(`LongFactor` × global median). A chain at least `LongFactor` × its own width, straight within
+1.5 px and uniform (`LocalUniformLow/High`) walks source cross-sections along its axis; the walk
+ends at paper, a solid, a wall or a crossing because the section leaves the uniform band. The
+measured span must itself pass the length gate and reach `HatchMinAspect` (12) own widths. It is
+then recovered only inside a regular parallel family: same direction (`HatchAngleTolDeg` 1°),
+width within 0.75–1.33×, span within `HatchSpanTol` (30 %), overlapping at least half, adjacent
+gaps within `HatchPitchTol` (12 %) of the nearest gap, pitch at least 2.5 widths, at least
+`TextPeerMin` (4) members of which at least two passed admission independently. More than
+`HatchMaxMembers` (256) straight candidates in a component keeps every fill. Ends grow into the
+component's own ink (same limit as chain tips); a line already emitted is never redrawn; the
+existing angle, junction and ink-release passes then run unchanged.
+
 VEC114 local junction finishing (`CenterlineLocalJunctions.cs`): after legacy final
 snapping, before local ink release, spatially indexed same-component painted
 line/circle bands may shorten finite local line endpoints to their centerline.
