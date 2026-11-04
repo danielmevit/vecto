@@ -204,6 +204,228 @@ public class CenterlineLocalArcTests
     }
 
     [Theory]
+    [InlineData("extended", 0, 0)]
+    [InlineData("extended", 23, .35)]
+    [InlineData("extended", 45, 0)]
+    [InlineData("extended", 78, .35)]
+    [InlineData("extended", 200, .1)]
+    [InlineData("near-crossing", 0, 0)]
+    [InlineData("near-crossing", 23, .35)]
+    [InlineData("near-crossing", 78, .35)]
+    [InlineData("ext-outer", 0, 0)]
+    [InlineData("ext-outer", 78, .35)]
+    public void StraightSideOfAContinuedArcIsOneTwoAnchorStroke(string kind, double rotation, double phase)
+    {
+        // The same one-pass source: the arc must stay whole, and the long side that
+        // overlaps it must be one weighted line, not a lower piece or remaining fill.
+        var f = Make(true, 1, rotation, 100, 10, kind, phase);
+        var center = f.Targets[0].Center;
+        double start = -Math.PI / 2 + rotation * Math.PI / 180, sweep = (kind == "near-crossing" ? 135 : 180) * Math.PI / 180;
+        var arc = Assert.Single(f.Doc.Strokes, s => Covers(s, center, start, sweep, 100));
+        AssertAnalyticExport(f.Doc, arc, center, 100, AssertEndpoints(arc, center, start, sweep, 100, 1));
+        var near = SidePoint(rotation, phase, 300, 0);
+        var remote = SidePoint(rotation, phase, 500, 0);
+        var line = Assert.Single(SideLines(f.Doc, near, remote));
+        Assert.False(line.Closed);
+        var segment = Assert.Single(line.Segments);
+        Assert.True(segment.IsLine(.02));
+        Assert.InRange(line.Width, 8.5, 11.5);
+        var ends = (segment.P3 - remote).Length < (segment.P0 - remote).Length
+            ? (Near: segment.P0, Remote: segment.P3) : (Near: segment.P3, Remote: segment.P0);
+        Assert.InRange((ends.Remote - remote).Length, 0, 3);
+        double turn = Math.Atan2(Cross(ends.Remote - ends.Near, remote - near), (ends.Remote - ends.Near).Dot(remote - near));
+        Assert.InRange(Math.Abs(turn) * 180 / Math.PI, 0, 1);
+        // No gap: the end sits on the accepted arc's band at the geometric join.
+        Assert.InRange(Math.Abs((ends.Near - center).Length - 100), 0, (arc.Width + line.Width) / 2);
+        Assert.InRange((ends.Near - near).Length, 0, 8);
+        // Nothing else retraces the side, and its source ink is painted. The side's own
+        // near-tangent junction costs dev up to 4%; the union must not add to that.
+        var axis = (remote - near).Normalized();
+        Assert.DoesNotContain(f.Doc.Strokes, o => o != line && o != arc && o.Segments.All(g => g.IsLine(.5)) &&
+            o.Segments.Any(g => (g.Eval(.5) - near).Dot(axis) >= 0 && (g.Eval(.5) - remote).Dot(axis) <= 0 &&
+                Math.Abs(Cross(g.Eval(.5) - near, axis)) <= 5));
+        var rendered = Rasterizer.Render(f.Doc);
+        int source = 0, lost = 0, invented = 0;
+        for (int y = 0; y < f.Source.Height; y++)
+            for (int x = 0; x < f.Source.Width; x++)
+            {
+                bool painted = rendered.GetPixel(x, y).R < 128;
+                if (f.Source.GetPixel(x, y).R < 128)
+                {
+                    source++;
+                    if (!painted) lost++;
+                }
+                else if (painted && !Nearby(f.Source, x, y, 3)) invented++;
+            }
+        Assert.InRange(lost / (double)source, 0, .03);
+        // Only the round cap over the source's butt end may pass the ink by >3px.
+        Assert.InRange(invented, 0, 40);
+        Assert.True(rendered.GetPixel((int)f.Solid.X, (int)f.Solid.Y).R < 128);
+    }
+
+    [Theory]
+    [InlineData("ext-gap", 0, 0)]
+    [InlineData("ext-gap", 78, .35)]
+    [InlineData("ext-parallel", 0, 0)]
+    [InlineData("ext-parallel", 23, .35)]
+    [InlineData("ext-cross", 0, 0)]
+    [InlineData("ext-cross", 78, .35)]
+    [InlineData("ext-wall", 0, 0)]
+    [InlineData("ext-wall", 23, .35)]
+    [InlineData("ext-radius", 0, 0)]
+    [InlineData("ext-radius", 78, .35)]
+    [InlineData("ext-glyphs", 0, 0)]
+    [InlineData("ext-glyphs", 78, .35)]
+    [InlineData("ext-far-gap", 0, 0)]
+    [InlineData("ext-far-gap", 78, .35)]
+    [InlineData("ext-near-gap", 0, 0)]
+    [InlineData("ext-near-gap", 78, .35)]
+    [InlineData("ext-far-cross", 0, 0)]
+    [InlineData("ext-far-cross", 78, .35)]
+    [InlineData("ext-far-wall", 0, 0)]
+    [InlineData("ext-far-wall", 78, .35)]
+    [InlineData("ext-step", 0, 0)]
+    [InlineData("ext-step", 78, .35)]
+    public void UnsupportedSideEvidenceInventsNoLineAndKeepsItsInk(string kind, double rotation, double phase)
+    {
+        var f = Make(true, 1, rotation, 100, 10, kind, phase);
+        var rendered = Rasterizer.Render(f.Doc);
+        bool Painted(Vec2 p) => rendered.GetPixel((int)p.X, (int)p.Y).R < 128;
+        Assert.True(Painted(f.Solid));
+        var near = SidePoint(rotation, phase, 300, 0);
+        var remote = SidePoint(rotation, phase, 500, 0);
+        var lines = SideLines(f.Doc, near, remote);
+        double Along(Vec2 p) => (p - near).Dot((remote - near).Normalized());
+        double Y(double along) => 300 + along / Math.Sqrt(1.01);
+        bool Spans(StrokePath l, double y) => l.Segments.Any(g =>
+            Math.Min(Y(Along(g.P0)), Y(Along(g.P3))) < y && Math.Max(Y(Along(g.P0)), Y(Along(g.P3))) > y);
+        void AssertWholeArc()
+        {
+            double a0 = -Math.PI / 2 + rotation * Math.PI / 180;
+            Assert.Single(f.Doc.Strokes, s => Covers(s, f.Targets[0].Center, a0, Math.PI, 100));
+        }
+        switch (kind)
+        {
+            case "ext-gap":
+                // Nothing crosses the paper before the join; the merged stub stays painted.
+                Assert.False(Painted(SidePoint(rotation, phase, 364, 0)));
+                Assert.True(Painted(SidePoint(rotation, phase, 340, 3)));
+                Assert.All(lines, l => Assert.All(l.Segments, g => Assert.InRange(Y(Math.Min(Along(g.P0), Along(g.P3))), 364, 520)));
+                break;
+            case "ext-parallel":
+                // The paper between the two sides survives, and each stays in its own band.
+                Assert.False(Painted(SidePoint(rotation, phase, 450, -7)));
+                Assert.True(Painted(SidePoint(rotation, phase, 450, -14)));
+                Assert.True(Painted(SidePoint(rotation, phase, 450, 0)));
+                break;
+            case "ext-cross":
+            {
+                // A transverse crossing in the merged band keeps its arm as ink, and the
+                // side does not claim the union through it.
+                var q = (near + remote) * .5;
+                var c = f.Targets[0].Center;
+                double a = 15 * Math.PI / 180 + rotation * Math.PI / 180;
+                Assert.True(Painted(c + new Vec2(Math.Cos(a), Math.Sin(a)) * 122));
+                Assert.All(lines, l => Assert.All(l.Segments, g =>
+                    Assert.InRange(Y(Math.Min(Along(g.P0), Along(g.P3))), 330, 520)));
+                Assert.True(q.X > 0);
+                break;
+            }
+            case "ext-wall":
+                Assert.True(Painted(SidePoint(rotation, phase, 361, 26)));
+                Assert.True(Painted(SidePoint(rotation, phase, 361, 0)));
+                Assert.All(lines, l => Assert.All(l.Segments, g =>
+                    Assert.InRange(Y(Math.Min(Along(g.P0), Along(g.P3))), 365, 520)));
+                break;
+            case "ext-radius":
+                // A larger-radius continuation is no straight side, however shallow it leaves.
+                Assert.DoesNotContain(f.Doc.Strokes, s => s.Segments.Count == 1 && s.Segments[0].IsLine(.02) &&
+                    OnRadius300(s.Segments[0].P0, rotation, phase) && OnRadius300(s.Segments[0].P3, rotation, phase) &&
+                    (s.Segments[0].P3 - s.Segments[0].P0).Length >= 100);
+                Assert.True(Painted(RadiusPoint(rotation, phase, 120)));
+                break;
+            case "ext-glyphs":
+                // A compact row touching the side stays filled source; the side stops at it.
+                for (int i = 0; i < 4; i++)
+                    Assert.True(Painted(SidePoint(rotation, phase, 434 + 12 * i, 11)));
+                Assert.DoesNotContain(f.Doc.Strokes, s => s.Segments.Any(g => Enumerable.Range(0, 41).Any(i =>
+                    (g.Eval(i / 40.0) - SidePoint(rotation, phase, 446, 11)).Length < 2)));
+                break;
+            // Below, the arc itself survives whole, so the side hypothesis really runs.
+            case "ext-far-gap":
+                AssertWholeArc();
+                Assert.False(Painted(SidePoint(rotation, phase, 414, 0)));
+                Assert.All(lines, l => Assert.False(Spans(l, 414)));
+                Assert.True(Painted(SidePoint(rotation, phase, 380, 0)));
+                break;
+            case "ext-near-gap":
+                Assert.False(Painted(SidePoint(rotation, phase, 346, 4)));
+                Assert.All(lines, l => Assert.False(Spans(l, 346)));
+                break;
+            case "ext-far-cross":
+                AssertWholeArc();
+                Assert.True(Painted(SidePoint(rotation, phase, 420, 34)));
+                Assert.True(Painted(SidePoint(rotation, phase, 420, -34)));
+                Assert.True(Painted(SidePoint(rotation, phase, 380, 0)));
+                break;
+            case "ext-step":
+            {
+                // A weight change is no licence to retrace: straight pieces never overlap.
+                AssertWholeArc();
+                Assert.True(Painted(SidePoint(rotation, phase, 470, 7)));
+                var spans = lines.SelectMany(l => l.Segments).Select(g =>
+                    (Lo: Math.Min(Along(g.P0), Along(g.P3)), Hi: Math.Max(Along(g.P0), Along(g.P3)))).OrderBy(x => x.Lo).ToList();
+                for (int i = 1; i < spans.Count; i++)
+                    Assert.True(spans[i].Lo >= spans[i - 1].Hi - 12, $"retraced {spans[i - 1]} {spans[i]}");
+                break;
+            }
+            case "ext-far-wall":
+                AssertWholeArc();
+                Assert.True(Painted(SidePoint(rotation, phase, 426, 26)));
+                Assert.True(Painted(SidePoint(rotation, phase, 380, 0)));
+                break;
+        }
+    }
+
+    static Vec2 RotateFrame(double degrees, double phase, Vec2 p)
+    {
+        double r = degrees * Math.PI / 180;
+        return new Vec2(phase, -phase * .7) + new Vec2(320, 320) +
+            new Vec2((p.X - 320) * Math.Cos(r) - (p.Y - 320) * Math.Sin(r),
+                (p.X - 320) * Math.Sin(r) + (p.Y - 320) * Math.Cos(r));
+    }
+
+    // A point on the source side x = 420 + .1(y - 320), `offset` along its normal.
+    static Vec2 SidePoint(double degrees, double phase, double y, double offset)
+    {
+        double d = Math.Sqrt(1.01);
+        return RotateFrame(degrees, phase, new Vec2(420 + .1 * (y - 320) + offset / d, y - .1 * offset / d));
+    }
+
+    // The r300 circle tangent to the r100 arc at (420, 320).
+    static Vec2 RadiusPoint(double degrees, double phase, double y) =>
+        RotateFrame(degrees, phase, new Vec2(120 + Math.Sqrt(90000 - (y - 320) * (y - 320)), y));
+
+    static bool OnRadius300(Vec2 p, double degrees, double phase) =>
+        Math.Abs((p - RotateFrame(degrees, phase, new Vec2(120, 320))).Length - 300) <= 6;
+
+    static List<StrokePath> SideLines(VectorDocument doc, Vec2 near, Vec2 remote)
+    {
+        var d = (remote - near).Normalized();
+        bool On(Vec2 p) => Math.Abs(Cross(p - near, d)) <= 6 && (p - near).Dot(d) >= -12 && (p - remote).Dot(d) <= 12;
+        return doc.Strokes.Where(s => s.Segments.All(g => g.IsLine(.05)) && s.Segments.All(g => On(g.P0) && On(g.P3)) &&
+            (s.Segments[0].P0 - s.Segments[^1].P3).Length >= 40).ToList();
+    }
+
+    static bool Nearby(RasterImage image, int x, int y, int reach)
+    {
+        for (int yy = Math.Max(0, y - reach); yy <= Math.Min(image.Height - 1, y + reach); yy++)
+            for (int xx = Math.Max(0, x - reach); xx <= Math.Min(image.Width - 1, x + reach); xx++)
+                if (image.GetPixel(xx, yy).R < 128) return true;
+        return false;
+    }
+
+    [Theory]
     [InlineData("nc-gap", 0, 0)]
     [InlineData("nc-gap", 23, .35)]
     [InlineData("nc-cross", 0, 0)]
@@ -414,6 +636,58 @@ public class CenterlineLocalArcTests
                             Math.Abs(q.Length - radius) <= width / 2) ||
                             (p.X >= 150 && p.X <= 320 && Math.Abs(q.Y + radius) <= width / 2) ||
                             (p.Y >= 300 && p.Y <= 500 && Math.Abs(q.X - radius * (kind == "tangent-foot" ? Math.Sqrt(1 + tilt * tilt) : 1) - q.Y * tilt) <= width / 2);
+                    }
+                    if (kind.StartsWith("ext-", StringComparison.Ordinal))
+                    {
+                        double a = Math.Atan2(q.Y, q.X), d = Math.Sqrt(1.01);
+                        double along = q.X - radius - q.Y * .1;
+                        bool sideBand = p.Y >= 300 && p.Y <= 500 && Math.Abs(along) <= width / 2;
+                        ink = (a >= -Math.PI / 2 && a <= Math.PI / 2 && Math.Abs(q.Length - radius) <= width / 2) ||
+                            (p.X >= 150 && p.X <= 320 && Math.Abs(q.Y + radius) <= width / 2);
+                        switch (kind)
+                        {
+                            case "ext-gap":
+                                ink |= sideBand && !(p.Y >= 360 && p.Y <= 368);
+                                break;
+                            case "ext-far-gap":
+                                ink |= sideBand && !(p.Y >= 410 && p.Y <= 418);
+                                break;
+                            case "ext-near-gap":
+                                ink |= sideBand && !(p.Y >= 343 && p.Y <= 349);
+                                break;
+                            case "ext-far-cross":
+                                ink |= sideBand || (p.Y >= 415 && p.Y <= 425 && along >= -40 && along <= 40);
+                                break;
+                            case "ext-far-wall":
+                                ink |= sideBand || (p.Y >= 415 && p.Y <= 437 && along >= -width/2 && along <= 34);
+                                break;
+                            case "ext-step":
+                                ink |= (sideBand && p.Y <= 440) || (p.Y > 440 && p.Y <= 500 && Math.Abs(along) <= 9);
+                                break;
+                            case "ext-outer":
+                                ink |= sideBand || (p.Y >= 360 && p.Y <= 500 && Math.Abs(along - 14 * d) <= width / 2);
+                                break;
+                            case "ext-parallel":
+                                ink |= sideBand || (p.Y >= 330 && p.Y <= 500 && Math.Abs(along + 14 * d) <= width / 2);
+                                break;
+                            case "ext-cross":
+                            {
+                                var n = new Vec2(Math.Cos(15 * Math.PI / 180), Math.Sin(15 * Math.PI / 180));
+                                ink |= sideBand || (Math.Abs(Cross(q, n)) <= width / 2 && q.Dot(n) >= radius - 25 && q.Dot(n) <= radius + 25);
+                                break;
+                            }
+                            case "ext-wall":
+                                ink |= sideBand || (p.Y >= 350 && p.Y <= 372 && along >= -width / 2 && along <= 34);
+                                break;
+                            case "ext-radius":
+                                ink |= p.Y >= 300 && p.Y <= 500 && Math.Abs((p - new Vec2(120, 320)).Length - 300) <= width / 2;
+                                break;
+                            case "ext-glyphs":
+                                ink |= sideBand;
+                                for (int i = 0; i < 4; i++)
+                                    ink |= Math.Abs(p.Y - (434 + 12 * i)) <= 4 && along >= width / 2 && along <= width / 2 + 14;
+                                break;
+                        }
                     }
                     if (kind.StartsWith("open", StringComparison.Ordinal))
                         ink = (q.X >= 0 && q.Y <= 0 &&

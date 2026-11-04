@@ -150,3 +150,23 @@ Search advances inward in quarter-pixel steps and accepts the first supported
 position, bounded by the original half-width. Released source ownership is still
 computed after final geometry, preserving uncovered filled-wall ink. Nonfinite
 lengths/widths are rejected. Anchor: `RepairLocalJunctions` / `FitCap`.
+
+VEC140 attached side (`RecoverAttachedSides`): only for an accepted arc holding a
+VEC133 bridge, the merged band's straight side is explained as the other half of a
+line+arc union. Hypotheses come from source ink beyond the arc band (seeds within
+one `sqrt(2rw)` of the bridge; 8-connected flood bounded by `2^14` px and
+`max(3·sqrt(2rw), 16w)` around it; at most 4 clusters; `2^21` samples per arc). The
+pixels at least `1.5w` from the circle give a principal direction (variance ratio
+≥ 9, ≥ `4w²` px), refined over three passes on thin centred cross-sections followed
+to the run's remote end (≥ 90 % sections, deviation ≤ 0.85 px, 10th–90th percentile
+widths within `max(2, 15 %)`, run ≥ `max(minLen, 8w)`). The walk back toward the
+arc requires painted centre and `±(w/2−1)` edges; paper or ink beside the band that
+is neither side nor arc rejects it. The near end is the walk's end clamped to the
+earlier of the line's backward circle crossing (else its foot) and the last ink
+outside the arc band, and must touch the arc band with a crossing of at most about
+25°. A tapering round end stops one half-width before its tip; a butt end at its
+last full section. ≤ 1 % of the band may be paper. A ridge running along the side
+and on past what the union explains rejects it, so nothing is retraced; otherwise
+all ridges inside the union are owned and the side is one two-anchor stroke.
+Rejected sides leave chains and fill exactly as they were. `RationalizeLineAngles`
+still applies, so the direction is the drafting angle within its 1.5° grid snap.

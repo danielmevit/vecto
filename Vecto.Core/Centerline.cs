@@ -202,7 +202,7 @@ public static partial class Centerline
             if (local.Contains(c.Id))
             {
                 ct.ThrowIfCancellationRequested();
-                ExtractLocal(c, comp, skel, widthAt, dtSq, inkMask, ink, median, pruneLen, growLen, p, w, h, strokes);
+                ExtractLocal(c, comp, skel, widthAt, dtSq, inkMask, ink, median, pruneLen, growLen, p, w, h, strokes, ct);
             }
         // VEC106: accepted circles replace the ring fragments local recovery traced and
         // join the stroke list before the stage-3 passes (which skip closed strokes, so
