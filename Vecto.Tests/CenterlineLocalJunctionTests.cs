@@ -596,44 +596,6 @@ public class CenterlineLocalJunctionTests
         Assert.True(rendered.GetPixel(636, (int)(axisY + 34)).R < 128);
     }
 
-    [Fact]
-    public void Vec147TemporaryInventory()
-    {
-        const int length = 148;
-        int bottom = HatchTop + length;
-        double axisY = bottom + HatchRailWidth / 2.0;
-        var scenes = new List<(string Name, RasterImage Image)>()
-        {
-            ("plain", HatchScene(length, [(300, false), (371, false), (442, false), (513, true)])),
-            ("stub+loop", HatchScene(length, [(300, false), (371, false), (442, false), (513, true)],
-                (x, y) => (x >= 700 && x < 709 && y >= bottom - 40 && y < bottom) ||
-                    ((x >= 800 && x < 840 && y >= bottom - 40 && y < bottom) && !(x >= 808 && x < 832 && y >= bottom - 32 && y < bottom - 8)))),
-            ("solid", HatchScene(length, [(300, false), (371, false), (442, false), (513, true)],
-                (x, y) => x >= 700 && x < 724 && y >= bottom - 22 && y < bottom + 38)),
-            ("paper", HatchScene(length, [(300, false), (371, false), (442, false), (513, true)], null,
-                (x, y) => x >= 700 && x < 726 && y >= bottom && y < bottom + HatchRailWidth)),
-            ("crossing", HatchScene(length, [(300, false), (371, false), (442, false), (513, true)],
-                (x, y) => x >= 700 && x < 709 && y >= bottom - 100 && y < bottom + HatchRailWidth + 100)),
-            ("stem+below", HatchScene(length, [(300, false), (371, false), (442, false), (513, true)],
-                (x, y) => (x >= 700 && x < 709 && y >= bottom - 100 && y < bottom) ||
-                    (x >= 700 && x < 709 && y >= bottom + HatchRailWidth && y < bottom + HatchRailWidth + 40))),
-            ("arc", HatchScene(length, [(300, false), (371, false), (442, false), (513, true)],
-                (x, y) => { var p = new Vec2(x + .5, y + .5); double d = (p - new Vec2(700, axisY + 90)).Length;
-                    return d >= 82 && d <= 98 && p.X <= 700.5 && p.Y >= axisY - 8 && p.Y <= axisY + 90; },
-                (x, y) => x >= 700 && y >= bottom && y < bottom + HatchRailWidth)),
-        };
-        var sb = new System.Text.StringBuilder();
-        foreach (var (name, image) in scenes)
-        {
-            var doc = TraceLineArt(image);
-            sb.AppendLine($"== {name}: {doc.Strokes.Count} strokes");
-            foreach (var s in doc.Strokes)
-                sb.AppendLine("  " + string.Join("|", s.Segments.Select(g =>
-                    $"({g.P0.X:0.#},{g.P0.Y:0.#})-({g.P3.X:0.#},{g.P3.Y:0.#}){(g.IsLine(.05) ? "L" : "C")}")));
-        }
-        Assert.Fail(sb.ToString());
-    }
-
     static List<List<(double X, double Y, double Bulge)>> DxfPolylines(string dxf)    {
         var lines = dxf.Split('\n').Select(l => l.Trim()).ToArray();
         var result = new List<List<(double X, double Y, double Bulge)>>();

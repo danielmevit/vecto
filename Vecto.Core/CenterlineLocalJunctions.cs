@@ -205,7 +205,6 @@ public static partial class Centerline
     {
         double gapMax = 2 * median;
         double cell = Math.Max(4, gapMax);
-        if (median >= 0) return; // TEMPORARY VEC147 stub: accepted-dev behaviour for control verification
         var grid = new Dictionary<long, List<(int Chain, int End)>>();
         bool welded = true;
         while (welded)
@@ -251,14 +250,13 @@ public static partial class Centerline
             var pieceA = EndPiece(a, e);
             var pieceB = EndPiece(b, f);
             if (Fit(pieceA) is not { } A || Fit(pieceB) is not { } B) return false;
-            if (!A.Straight && !B.Straight) return false;
-            if (!A.Straight || !B.Straight)
-            {
-                // a junction remnant too short to test rides the tested partner's line
-                var (shortPiece, longFit) = A.Straight ? (pieceB, A) : (pieceA, B);
-                foreach (int q in shortPiece)
-                    if (Math.Abs((Point(q) - longFit.Origin).Dot(longFit.Normal)) > longFit.Tol) return false;
-            }
+            // Both facing pieces must carry their own straight evidence. A remnant too
+            // short to test cannot be told from the ridge pixel of a CROSSING line at
+            // the intersection: on the frozen cad-real scan such a remnant rode the
+            // rail's line across the crossing, and the merged dead-end tip then
+            // blocked the tip extension that had recovered the whole line as one
+            // stroke. Pieces that fail the residual or bow gate are already null.
+            if (!A.Straight || !B.Straight) return false;
             var dirA = A.Dir;
             if (dirA.Dot(pa - Point(e == 0 ? pieceA[^1] : pieceA[0])) < 0) dirA = dirA * -1;
             var dirB = B.Dir;
@@ -305,11 +303,38 @@ public static partial class Centerline
                 {
                     int eq = pixels[end == 0 ? 0 : ^1];
                     if ((Point(eq) - mid).LengthSq > radius * radius) continue;
-                    if (Fit(EndPiece(pixels, end)) is not { } S) continue;
+                    if (StemDir(EndPiece(pixels, end)) is not { } S) continue;
                     if (Math.Abs(S.Dir.Dot(weldDir)) <= transverse) return true;
                 }
             }
             return false;
+        }
+
+        // The stem only vouches that the junction is real, so its end piece needs a
+        // transverse direction and the thin width — not the weld pieces' residual or
+        // bow gates. A straight stem's one-pixel raster jog where it lands on the
+        // line is a step the bow gate reads as strong curvature; the TLS direction
+        // stays transverse, and the stem's length, thinness and the weld's own piece
+        // gates and source-ink walk carry every remaining protection.
+        (Vec2 Dir, double Med)? StemDir(List<int> piece)
+        {
+            if (piece.Count < 2) return null;
+            var widths = piece.Select(Width).OrderBy(v => v).ToList();
+            double med = widths[widths.Count / 2];
+            if (med <= 0 || med > thin) return null;
+            var pts = piece.Select(Point).ToList();
+            double mx = 0, my = 0;
+            foreach (var p in pts) { mx += p.X; my += p.Y; }
+            mx /= pts.Count; my /= pts.Count;
+            double xx = 0, xy = 0, yy = 0;
+            foreach (var p in pts)
+            {
+                double dx = p.X - mx, dy = p.Y - my;
+                xx += dx * dx; xy += dx * dy; yy += dy * dy;
+            }
+            if (xx + yy < 1e-12) return null;
+            double theta = 0.5 * DetMath.Atan2(2 * xy, xx - yy);
+            return (new Vec2(DetMath.Cos(theta), DetMath.Sin(theta)), med);
         }
 
         // Source-ink proof of the gap: every half-step is this component's ink, and the
