@@ -181,4 +181,256 @@ public static partial class Centerline
             }
         }
     }
+
+    /// <summary>
+    /// VEC147: weld the chain fragments of one straight source line back together across
+    /// the junction where another stroke terminates on it. A stem that ends on a line
+    /// elevates the distance transform along the line's axis, so the ridge local-max test
+    /// drops the axis pixels for the stem's width and the line traces as facing fragments
+    /// with an isolated maximum between them; the short fragments fail the admission gate
+    /// and their ink stays filled. A weld needs far more than collinearity: both facing
+    /// end pieces must be straight and thin (an arc's end piece never passes the bow gate),
+    /// collinear within <see cref="JunctionMergeAngleDeg"/> and laterally aligned within
+    /// <see cref="LineTol"/>; the junction must be REAL — a third chain long enough to be
+    /// a stroke of its own must end transversely beside the gap, the terminating stem —
+    /// and every half-step of the chord must be this component's ink whose cross section
+    /// stays uniform except where the stem itself widens it on ONE side (a solid, a
+    /// crossing or paper fails the walk). Deterministic: after every weld the end grid is
+    /// rebuilt and the scan restarts, so the first weldable ordered pair of chain ends
+    /// wins, the same order <see cref="MergeCollinearAcrossJunctions"/> keeps for strokes.
+    /// </summary>
+    static void WeldJunctionSplitChains(List<(List<int> Pixels, bool Closed)> chains,
+        int id, int[] comp, bool[] inkMask, double[] widthAt, int[] dtSq,
+        double thin, double median, int minLen, int w, int h)
+    {
+        double gapMax = 2 * median;
+        double cell = Math.Max(4, gapMax);
+        if (median >= 0) return; // TEMPORARY VEC147 stub: accepted-dev behaviour for control verification
+        var grid = new Dictionary<long, List<(int Chain, int End)>>();
+        bool welded = true;
+        while (welded)
+        {
+            welded = false;
+            grid.Clear();
+            for (int i = 0; i < chains.Count; i++)
+            {
+                var (pixels, closed) = chains[i];
+                if (closed || pixels.Count < 2) continue;
+                Add(pixels[0], i, 0);
+                Add(pixels[^1], i, 1);
+            }
+            for (int i = 0; i < chains.Count && !welded; i++)
+            {
+                if (chains[i].Closed || chains[i].Pixels.Count < 2) continue;
+                for (int e = 0; e < 2 && !welded; e++)
+                {
+                    var found = new List<(int Chain, int End)>();
+                    Collect(chains[i].Pixels[e == 0 ? 0 : ^1], found);
+                    found.Sort();
+                    foreach (var (j, f) in found)
+                    {
+                        if (j == i) continue;
+                        if (Weld(i, e, j, f)) { welded = true; break; }
+                    }
+                }
+            }
+        }
+
+        bool Weld(int i, int e, int j, int f)
+        {
+            var a = chains[i].Pixels;
+            var b = chains[j].Pixels;
+            int ea = a[e == 0 ? 0 : ^1], eb = b[f == 0 ? 0 : ^1];
+            var pa = Point(ea);
+            var pb = Point(eb);
+            double gap = (pb - pa).Length;
+            if (gap < .5 || gap > gapMax) return false;
+            // a weld that would close a ring leaves the merged chain's far ends adjacent
+            int fa = a[e == 0 ? ^1 : 0], fb = b[f == 0 ? ^1 : 0];
+            if ((Point(fa) - Point(fb)).LengthSq <= 4) return false;
+            var pieceA = EndPiece(a, e);
+            var pieceB = EndPiece(b, f);
+            if (Fit(pieceA) is not { } A || Fit(pieceB) is not { } B) return false;
+            if (!A.Straight && !B.Straight) return false;
+            if (!A.Straight || !B.Straight)
+            {
+                // a junction remnant too short to test rides the tested partner's line
+                var (shortPiece, longFit) = A.Straight ? (pieceB, A) : (pieceA, B);
+                foreach (int q in shortPiece)
+                    if (Math.Abs((Point(q) - longFit.Origin).Dot(longFit.Normal)) > longFit.Tol) return false;
+            }
+            var dirA = A.Dir;
+            if (dirA.Dot(pa - Point(e == 0 ? pieceA[^1] : pieceA[0])) < 0) dirA = dirA * -1;
+            var dirB = B.Dir;
+            if (dirB.Dot(pb - Point(f == 0 ? pieceB[^1] : pieceB[0])) < 0) dirB = dirB * -1;
+            var chord = (pb - pa) * (1 / gap);
+            if (chord.Dot(dirA) <= 0 || chord.Dot(dirB) >= 0) return false;
+            if (dirA.Dot(dirB) > -DetMath.Cos(JunctionMergeAngleDeg * Math.PI / 180.0)) return false;
+            if (Math.Abs((pb - A.Origin).Dot(A.Normal)) > A.Tol) return false;
+            if (Math.Abs((pa - B.Origin).Dot(B.Normal)) > B.Tol) return false;
+            if (!HasStem((pa + pb) * .5, dirA, i, j)) return false;
+            if (!InkSupported(pa, pb, chord, Math.Max(A.Med, B.Med))) return false;
+            var bridge = new List<int>();
+            for (double t = .5; t < gap; t += .5)
+            {
+                int q = Pixel(pa + chord * t);
+                if (q == ea || q == eb || bridge.Count > 0 && bridge[^1] == q) continue;
+                bridge.Add(q);
+            }
+            var merged = new List<int>(a.Count + b.Count + bridge.Count);
+            if (e == 1) merged.AddRange(a);
+            else for (int k = a.Count - 1; k >= 0; k--) merged.Add(a[k]);
+            merged.AddRange(bridge);
+            if (f == 0) merged.AddRange(b);
+            else for (int k = b.Count - 1; k >= 0; k--) merged.Add(b[k]);
+            chains[i] = (merged, false);
+            chains.RemoveAt(j);
+            return true;
+        }
+
+        // The terminating stem: a third chain at least half the local admission length
+        // with an end beside the gap whose end piece points across the weld line. Corner
+        // staircase remnants and short stubs are not strokes of their own and never
+        // authorize a weld; tangential arc joins have no transverse end at all.
+        bool HasStem(Vec2 mid, Vec2 weldDir, int i, int j)
+        {
+            double radius = 2 * median;
+            double transverse = DetMath.Cos(Math.PI / 4);
+            for (int k = 0; k < chains.Count; k++)
+            {
+                if (k == i || k == j) continue;
+                var (pixels, closed) = chains[k];
+                if (closed || pixels.Count * 2 < minLen) continue;
+                for (int end = 0; end < 2; end++)
+                {
+                    int eq = pixels[end == 0 ? 0 : ^1];
+                    if ((Point(eq) - mid).LengthSq > radius * radius) continue;
+                    if (Fit(EndPiece(pixels, end)) is not { } S) continue;
+                    if (Math.Abs(S.Dir.Dot(weldDir)) <= transverse) return true;
+                }
+            }
+            return false;
+        }
+
+        // Source-ink proof of the gap: every half-step is this component's ink, and the
+        // cross section stays a uniform band of the line's own width. Where the stem
+        // widens the section, exactly one side keeps the line's half band, and the
+        // polluted zone may never exceed the stem-scale reach; a solid, a crossing or
+        // paper ends the walk.
+        bool InkSupported(Vec2 pa, Vec2 pb, Vec2 chord, double med)
+        {
+            var normal = new Vec2(-chord.Y, chord.X);
+            double lo = .3 * med, hi = .7 * med;
+            int limit = (int)Math.Ceiling(hi) + 1;
+            double zone = 0, zoneMax = 2 * med;
+            int steps = (int)Math.Ceiling((pb - pa).Length * 2);
+            for (int s = 0; s <= steps; s++)
+            {
+                var q = pa + (pb - pa) * (s / (double)steps);
+                if (!IsInk(q)) return false;
+                int runA = Run(q, normal, limit), runB = Run(q, normal * -1, limit);
+                double width = runA + runB + 1;
+                if (width >= LocalUniformLow * med && width <= LocalUniformHigh * med && Math.Abs(runA - runB) <= 3)
+                    zone = 0;
+                else
+                {
+                    bool bandA = runA >= lo && runA <= hi, bandB = runB >= lo && runB <= hi;
+                    if (!bandA && !bandB) return false;
+                    zone += .5;
+                    if (zone > zoneMax) return false;
+                }
+            }
+            return true;
+
+            int Run(Vec2 q, Vec2 step, int reach)
+            {
+                int n = 0;
+                while (n < reach && IsInk(q + step * (n + 1))) n++;
+                return n;
+            }
+        }
+
+        // TLS fit of one end piece. Straight is false when the piece is too short to test
+        // (the caller accepts it only on the partner's line); null means unmeasurable,
+        // too thick for a thin stroke, or failing the residual or bow gate.
+        (Vec2 Dir, Vec2 Origin, Vec2 Normal, double Med, double Tol, bool Straight)? Fit(List<int> piece)
+        {
+            if (piece.Count < 2) return null;
+            var widths = piece.Select(Width).OrderBy(v => v).ToList();
+            double med = widths[widths.Count / 2];
+            if (med <= 0 || med > thin) return null;
+            var pts = piece.Select(Point).ToList();
+            double mx = 0, my = 0;
+            foreach (var p in pts) { mx += p.X; my += p.Y; }
+            mx /= pts.Count; my /= pts.Count;
+            double xx = 0, xy = 0, yy = 0;
+            foreach (var p in pts)
+            {
+                double dx = p.X - mx, dy = p.Y - my;
+                xx += dx * dx; xy += dx * dy; yy += dy * dy;
+            }
+            if (xx + yy < 1e-12) return null;
+            double theta = 0.5 * DetMath.Atan2(2 * xy, xx - yy);
+            var dir = new Vec2(DetMath.Cos(theta), DetMath.Sin(theta));
+            var normal = new Vec2(-dir.Y, dir.X);
+            var origin = new Vec2(mx, my);
+            if (piece.Count < StraightRunMinPoints) return (dir, origin, normal, med, LineTol(med), false);
+            double worst = 0;
+            foreach (var p in pts) worst = Math.Max(worst, Math.Abs((p - origin).Dot(normal)));
+            if (worst > LineTol(med)) return null;
+            // bow: r = α·u² + β·u + γ with u in [-1, 1]; |α| is the sagitta (a curve's
+            // signature — the same convention as StraightRunLine)
+            double s0 = double.MaxValue, s1 = double.MinValue;
+            foreach (var p in pts)
+            {
+                double s = (p - origin).Dot(dir);
+                s0 = Math.Min(s0, s);
+                s1 = Math.Max(s1, s);
+            }
+            double half = (s1 - s0) / 2, midS = (s0 + s1) / 2;
+            if (half < 1e-9) return null;
+            double su0 = 0, su1 = 0, su2 = 0, su3 = 0, su4 = 0, sr0 = 0, sr1 = 0, sr2 = 0;
+            foreach (var p in pts)
+            {
+                double u = ((p - origin).Dot(dir) - midS) / half, r = (p - origin).Dot(normal), u2 = u * u;
+                su0 += 1; su1 += u; su2 += u2; su3 += u2 * u; su4 += u2 * u2;
+                sr0 += r; sr1 += r * u; sr2 += r * u2;
+            }
+            double det = su4 * (su2 * su0 - su1 * su1) - su3 * (su3 * su0 - su1 * su2) + su2 * (su3 * su1 - su2 * su2);
+            if (Math.Abs(det) < 1e-12) return null;
+            double alpha = (sr2 * (su2 * su0 - su1 * su1) - su3 * (sr1 * su0 - su1 * sr0) + su2 * (sr1 * su1 - su2 * sr0)) / det;
+            if (Math.Abs(alpha) > StraightRunMaxSag) return null;
+            return (dir, origin, normal, med, LineTol(med), true);
+        }
+
+        List<int> EndPiece(List<int> pixels, int end)
+        {
+            int count = Math.Min((int)Math.Ceiling(2 * median), pixels.Count);
+            return end == 0 ? pixels.GetRange(0, count) : pixels.GetRange(pixels.Count - count, count);
+        }
+
+        Vec2 Point(int q) => new(q % w + .5, q / w + .5);
+        int Pixel(Vec2 p) => (int)Math.Floor(p.Y) * w + (int)Math.Floor(p.X);
+        double Width(int q) => widthAt[q] > 0 ? widthAt[q] : 2 * Math.Sqrt(dtSq[q]) - 1;
+        bool IsInk(Vec2 q)
+        {
+            int x = (int)Math.Floor(q.X), y = (int)Math.Floor(q.Y);
+            return (uint)x < (uint)w && (uint)y < (uint)h && inkMask[y * w + x] && comp[y * w + x] == id;
+        }
+        void Add(int q, int chain, int end)
+        {
+            int cx = (int)(q % w / cell), cy = (int)(q / w / cell);
+            long key = CellKey(cx, cy);
+            if (!grid.TryGetValue(key, out var list)) grid[key] = list = [];
+            list.Add((chain, end));
+        }
+        void Collect(int q, List<(int Chain, int End)> into)
+        {
+            int cx = (int)(q % w / cell), cy = (int)(q / w / cell);
+            for (int yy = cy - 1; yy <= cy + 1; yy++)
+                for (int xx = cx - 1; xx <= cx + 1; xx++)
+                    if (grid.TryGetValue(CellKey(xx, yy), out var list))
+                        into.AddRange(list);
+        }
+    }
 }
