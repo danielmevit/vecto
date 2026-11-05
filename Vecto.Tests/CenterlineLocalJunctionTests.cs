@@ -481,6 +481,34 @@ public class CenterlineLocalJunctionTests
     }
 
     [Fact]
+    public void JunctionSplitButtCornersKeepUnsupportedOuterQuadrantsWhite()
+    {
+        const int length = 148;
+        int bottom = HatchTop + length;
+        double axisY = bottom + HatchRailWidth / 2.0;
+        // Butt-ended walls stop at the rail axis, just as the rail starts at each
+        // wall axis. Axis ink alone cannot authorize a full round cap at that corner.
+        bool Walls(int x, int y) => y >= HatchTop && y < bottom + HatchRailWidth / 2 &&
+            ((x >= 92 && x < 108) || (x >= 1492 && x < 1508));
+        var image = HatchScene(length, [(300, false), (371, false), (442, false), (513, true)], Walls);
+        var doc = TraceLineArt(image);
+        var rail = Assert.Single(RailStrokes(doc, axisY));
+        var line = Assert.Single(rail.Segments);
+        Assert.True(line.IsLine(.02));
+        Assert.True(Math.Min(line.P0.X, line.P3.X) > 100);
+        Assert.True(Math.Max(line.P0.X, line.P3.X) < 1500);
+        var rendered = Rasterizer.Render(doc);
+        // These pixels are inside a radius-eight cap placed at the wall/rail axes,
+        // but outside both butt rectangles. Moving to the axes would invent ink.
+        foreach (int x in new[] { 96, 1503 })
+        {
+            Assert.True(image.GetPixel(x, bottom + 12).R > 128);
+            Assert.True(rendered.GetPixel(x, bottom + 12).R > 128);
+        }
+        Assert.True(rendered.GetPixel(800, bottom + 8).R < 128);
+    }
+
+    [Fact]
     public void JunctionSplitWeldRequiresALongTerminatingStem()
     {
         const int length = 148;
