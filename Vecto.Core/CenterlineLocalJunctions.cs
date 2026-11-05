@@ -195,7 +195,8 @@ public static partial class Centerline
     /// a stroke of its own must end transversely beside the gap, the terminating stem —
     /// and every half-step of the chord must be this component's ink whose cross section
     /// stays uniform except where the stem itself widens it on ONE side (a solid, a
-    /// crossing or paper fails the walk). Deterministic: after every weld the end grid is
+    /// perpendicular crossing or paper fails the walk; a short walk beside an oblique
+    /// through-line of similar width can still pass and keeps that line intact). Deterministic: after every weld the end grid is
     /// rebuilt and the scan restarts, so the first weldable ordered pair of chain ends
     /// wins, the same order <see cref="MergeCollinearAcrossJunctions"/> keeps for strokes.
     /// A weld joins facing ends only and never moves the merged chain's outer ends: at a
