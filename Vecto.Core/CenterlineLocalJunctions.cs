@@ -198,6 +198,9 @@ public static partial class Centerline
     /// crossing or paper fails the walk). Deterministic: after every weld the end grid is
     /// rebuilt and the scan restarts, so the first weldable ordered pair of chain ends
     /// wins, the same order <see cref="MergeCollinearAcrossJunctions"/> keeps for strokes.
+    /// A weld joins facing ends only and never moves the merged chain's outer ends: at a
+    /// butt-ended corner the fitted endpoint stays inside the theoretical corner axis,
+    /// because a round cap placed on that axis would paint source paper.
     /// </summary>
     static void WeldJunctionSplitChains(List<(List<int> Pixels, bool Closed)> chains,
         int id, int[] comp, bool[] inkMask, double[] widthAt, int[] dtSq,
@@ -303,8 +306,8 @@ public static partial class Centerline
                 {
                     int eq = pixels[end == 0 ? 0 : ^1];
                     if ((Point(eq) - mid).LengthSq > radius * radius) continue;
-                    if (StemDir(EndPiece(pixels, end)) is not { } S) continue;
-                    if (Math.Abs(S.Dir.Dot(weldDir)) <= transverse) return true;
+                    if (StemDir(EndPiece(pixels, end)) is not { } stem) continue;
+                    if (Math.Abs(stem.Dot(weldDir)) <= transverse) return true;
                 }
             }
             return false;
@@ -316,7 +319,7 @@ public static partial class Centerline
         // line is a step the bow gate reads as strong curvature; the TLS direction
         // stays transverse, and the stem's length, thinness and the weld's own piece
         // gates and source-ink walk carry every remaining protection.
-        (Vec2 Dir, double Med)? StemDir(List<int> piece)
+        Vec2? StemDir(List<int> piece)
         {
             if (piece.Count < 2) return null;
             var widths = piece.Select(Width).OrderBy(v => v).ToList();
@@ -334,7 +337,7 @@ public static partial class Centerline
             }
             if (xx + yy < 1e-12) return null;
             double theta = 0.5 * DetMath.Atan2(2 * xy, xx - yy);
-            return (new Vec2(DetMath.Cos(theta), DetMath.Sin(theta)), med);
+            return new Vec2(DetMath.Cos(theta), DetMath.Sin(theta));
         }
 
         // Source-ink proof of the gap: every half-step is this component's ink, and the
@@ -376,8 +379,8 @@ public static partial class Centerline
         }
 
         // TLS fit of one end piece. Straight is false when the piece is too short to test
-        // (the caller accepts it only on the partner's line); null means unmeasurable,
-        // too thick for a thin stroke, or failing the residual or bow gate.
+        // (the caller refuses the weld); null means unmeasurable, too thick for a thin
+        // stroke, or failing the residual or bow gate.
         (Vec2 Dir, Vec2 Origin, Vec2 Normal, double Med, double Tol, bool Straight)? Fit(List<int> piece)
         {
             if (piece.Count < 2) return null;

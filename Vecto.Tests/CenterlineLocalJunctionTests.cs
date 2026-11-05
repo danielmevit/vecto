@@ -624,7 +624,8 @@ public class CenterlineLocalJunctionTests
         Assert.True(rendered.GetPixel(636, (int)(axisY + 34)).R < 128);
     }
 
-    static List<List<(double X, double Y, double Bulge)>> DxfPolylines(string dxf)    {
+    static List<List<(double X, double Y, double Bulge)>> DxfPolylines(string dxf)
+    {
         var lines = dxf.Split('\n').Select(l => l.Trim()).ToArray();
         var result = new List<List<(double X, double Y, double Bulge)>>();
         List<(double X, double Y, double Bulge)>? current = null;
