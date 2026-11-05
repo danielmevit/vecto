@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **One more connected CAD hatch becomes an editable line.** Line art mode
+  checks the source ink and neighboring parallel strokes before recovering a
+  line whose raster ridge broke at a width step. The controlled 600-DPI CAD
+  reference improves from 23 to 24 of 27 lines present and from 14 to 15
+  two-anchor lines; its labels and solid marks stay filled. A near-vertical
+  direction-sign correction keeps the family test consistent across the angle
+  seam. Other tracing styles remain byte-identical.
 - **CAD status and evaluation guides updated.** The AI orientation now records
   the accepted modern vector-original CAD measurements, the remaining hatch
   and two-anchor gap, and the rule that text and solid marks stay filled.
