@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A broken CAD line can rejoin across a real junction.** Line art mode now
+  checks straightness, a terminating branch, and source ink before welding
+  separated line fragments. On the controlled 600-DPI CAD reference, line
+  presence rises from 24 to 25 of 27; 15 remain strict two-anchor lines.
+  The housing-bottom stroke spans its painted length, with endpoints kept
+  inside the source's butt corners. Lower-resolution CAD outputs and all
+  other tracing styles remain byte-identical.
 - **One more connected CAD hatch becomes an editable line.** Line art mode
   checks the source ink and neighboring parallel strokes before recovering a
   line whose raster ridge broke at a width step. The controlled 600-DPI CAD
