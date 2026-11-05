@@ -398,6 +398,33 @@ public class CenterlineLocalJunctionTests
         foreach (int x in xs) Assert.Empty(StemStrokes(doc, x));
     }
 
+    [Theory]
+    [InlineData(0, true, true)]
+    [InlineData(70, false, false)]
+    [InlineData(200, false, false)]
+    public void AsymmetricHatchOverlapIsInvariantToPeerDirection(double along, bool overlaps, bool duplicate)
+    {
+        // Opposite sides of the PCA +/-90 degree seam, with asymmetric source walks.
+        const double epsilon = 1e-8;
+        var up = new Vec2(epsilon, Math.Sqrt(1 - epsilon * epsilon));
+        var down = new Vec2(epsilon, -up.Y);
+        var type = typeof(Centerline).GetNestedType("HatchLine", BindingFlags.NonPublic)!;
+        object Line(Vec2 center, Vec2 dir, double lo, double hi) =>
+            Activator.CreateInstance(type, [center, dir, lo, hi, 9.0, true,
+                center + dir * lo, center + dir * hi])!;
+        var seed = Line(new Vec2(0, 0), up, -10, 100);
+        var forward = Line(up * along, up, -10, 100);
+        var reversed = Line(up * along, down, -100, 10);
+        double Overlap(object peer) => (double)type.GetMethod("Overlap")!.Invoke(null, [seed, peer])!;
+        bool Same(object peer) => (bool)type.GetMethod("SameLine")!.Invoke(null, [seed, peer])!;
+        Assert.Equal(Overlap(forward), Overlap(reversed), 6);
+        Assert.Equal(overlaps, Overlap(reversed) >= 55);
+        Assert.Equal(duplicate, Same(reversed));
+        // Lateral separation and nonparallel lines must not become duplicates.
+        Assert.False(Same(Line(new Vec2(30, 0), down, -100, 10)));
+        Assert.False(Same(Line(new Vec2(0, 0), new Vec2(1, 0), -10, 100)));
+    }
+
     static List<List<(double X, double Y, double Bulge)>> DxfPolylines(string dxf)
     {
         var lines = dxf.Split('\n').Select(l => l.Trim()).ToArray();

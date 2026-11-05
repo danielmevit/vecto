@@ -185,3 +185,5 @@ and on past what the union explains rejects it, so nothing is retraced; otherwis
 all ridges inside the union are owned and the side is one two-anchor stroke.
 Rejected sides leave chains and fill exactly as they were. `RationalizeLineAngles`
 still applies, so the direction is the drafting angle within its 1.5° grid snap.
+
+VEC146: hatch family overlap and deduplication align the peer signed walk interval to the seed direction (negative direction dot product maps `[Lo,Hi]` to `[-Hi,-Lo]`), including the near-vertical PCA seam. Source walks, endpoints and family thresholds are unchanged.

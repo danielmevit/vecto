@@ -347,6 +347,25 @@ public static partial class Centerline
     sealed record HatchLine(Vec2 Center, Vec2 Dir, double Lo, double Hi, double Width, bool Admitted, Vec2 A, Vec2 B)
     {
         public double Span => Hi - Lo;
+
+        public static bool SameLine(HatchLine a, HatchLine b)
+        {
+            if (Math.Abs(a.Dir.X * b.Dir.Y - a.Dir.Y * b.Dir.X) > DetMath.Sin(HatchAngleTolDeg * Math.PI / 180)) return false;
+            var delta = b.Center - a.Center;
+            if (Math.Abs(delta.X * a.Dir.Y - delta.Y * a.Dir.X) > Math.Max(a.Width, b.Width) / 2) return false;
+            return Overlap(a, b) >= .5 * Math.Min(a.Span, b.Span);
+        }
+
+        public static double Overlap(HatchLine a, HatchLine b)
+        {
+            double along = (b.Center - a.Center).Dot(a.Dir);
+            // PCA directions can straddle +/-90 degrees. Express the peer's signed
+            // walk interval in the seed's orientation before comparing or deduplicating.
+            bool reversed = a.Dir.Dot(b.Dir) < 0;
+            double lo = reversed ? -b.Hi : b.Lo;
+            double hi = reversed ? -b.Lo : b.Hi;
+            return Math.Min(a.Hi, along + hi) - Math.Max(a.Lo, along + lo);
+        }
     }
 
     /// <summary>
@@ -369,7 +388,7 @@ public static partial class Centerline
             if (closed || arcOwned.Contains(pixels)) continue;
             if (Measure(pixels) is not { } line) continue;
             // Two fragments of one drawn line walk to the same span: keep one.
-            if (lines.Any(o => SameLine(o, line))) continue;
+            if (lines.Any(o => HatchLine.SameLine(o, line))) continue;
             if (lines.Count == HatchMaxMembers) return [];
             lines.Add(line);
         }
@@ -464,20 +483,6 @@ public static partial class Centerline
             return end + dir * growLen;
         }
 
-        static bool SameLine(HatchLine a, HatchLine b)
-        {
-            if (Math.Abs(a.Dir.X * b.Dir.Y - a.Dir.Y * b.Dir.X) > DetMath.Sin(HatchAngleTolDeg * Math.PI / 180)) return false;
-            var delta = b.Center - a.Center;
-            if (Math.Abs(delta.X * a.Dir.Y - delta.Y * a.Dir.X) > Math.Max(a.Width, b.Width) / 2) return false;
-            return Overlap(a, b) >= .5 * Math.Min(a.Span, b.Span);
-        }
-
-        static double Overlap(HatchLine a, HatchLine b)
-        {
-            double along = (b.Center - a.Center).Dot(a.Dir);
-            return Math.Min(a.Hi, along + b.Hi) - Math.Max(a.Lo, along + b.Lo);
-        }
-
         bool InRegularFamily(HatchLine seed)
         {
             double tol = DetMath.Sin(HatchAngleTolDeg * Math.PI / 180);
@@ -488,7 +493,7 @@ public static partial class Centerline
                 if (Math.Abs(o.Dir.X * seed.Dir.Y - o.Dir.Y * seed.Dir.X) > tol) continue;
                 if (o.Width < 0.75 * seed.Width || o.Width > seed.Width / 0.75) continue;
                 if (Math.Abs(o.Span - seed.Span) > HatchSpanTol * seed.Span) continue;
-                if (Overlap(seed, o) < .5 * Math.Min(seed.Span, o.Span)) continue;
+                if (HatchLine.Overlap(seed, o) < .5 * Math.Min(seed.Span, o.Span)) continue;
                 peers.Add(((o.Center - seed.Center).Dot(normal), o));
             }
             peers.Sort((a, b) => a.Offset.CompareTo(b.Offset));
