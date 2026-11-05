@@ -98,6 +98,9 @@ gaps within `HatchPitchTol` (12 %) of the nearest gap, pitch at least 2.5 widths
 `HatchMaxMembers` (256) straight candidates in a component keeps every fill. Ends grow into the
 component's own ink (same limit as chain tips); a line already emitted is never redrawn; the
 existing angle, junction and ink-release passes then run unchanged.
+VEC146: family overlap and deduplication align the peer signed walk interval to the seed
+direction: a negative direction dot product maps `[Lo,Hi]` to `[-Hi,-Lo]`, including the
+near-vertical PCA seam. Source walks, endpoints and family thresholds are unchanged.
 
 VEC114 local junction finishing (`CenterlineLocalJunctions.cs`): after legacy final
 snapping, before local ink release, spatially indexed same-component painted
@@ -185,5 +188,3 @@ and on past what the union explains rejects it, so nothing is retraced; otherwis
 all ridges inside the union are owned and the side is one two-anchor stroke.
 Rejected sides leave chains and fill exactly as they were. `RationalizeLineAngles`
 still applies, so the direction is the drafting angle within its 1.5° grid snap.
-
-VEC146: hatch family overlap and deduplication align the peer signed walk interval to the seed direction (negative direction dot product maps `[Lo,Hi]` to `[-Hi,-Lo]`), including the near-vertical PCA seam. Source walks, endpoints and family thresholds are unchanged.

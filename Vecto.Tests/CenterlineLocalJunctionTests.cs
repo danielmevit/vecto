@@ -400,6 +400,8 @@ public class CenterlineLocalJunctionTests
 
     [Theory]
     [InlineData(0, true, true)]
+    [InlineData(30, true, true)]
+    [InlineData(-70, false, false)]
     [InlineData(70, false, false)]
     [InlineData(200, false, false)]
     public void AsymmetricHatchOverlapIsInvariantToPeerDirection(double along, bool overlaps, bool duplicate)
@@ -418,6 +420,9 @@ public class CenterlineLocalJunctionTests
         double Overlap(object peer) => (double)type.GetMethod("Overlap")!.Invoke(null, [seed, peer])!;
         bool Same(object peer) => (bool)type.GetMethod("SameLine")!.Invoke(null, [seed, peer])!;
         Assert.Equal(Overlap(forward), Overlap(reversed), 6);
+        var reversedSeed = Line(new Vec2(0, 0), down, -100, 10);
+        double reversedSeedOverlap = (double)type.GetMethod("Overlap")!.Invoke(null, [reversedSeed, forward])!;
+        Assert.Equal(Overlap(forward), reversedSeedOverlap, 6);
         Assert.Equal(overlaps, Overlap(reversed) >= 55);
         Assert.Equal(duplicate, Same(reversed));
         // Lateral separation and nonparallel lines must not become duplicates.
