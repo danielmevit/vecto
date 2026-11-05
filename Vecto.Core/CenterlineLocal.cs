@@ -268,6 +268,8 @@ public static partial class Centerline
         foreach (int q in c.Pixels)
             if (skel[q] && tracer.Degree(q) == 0) chains.Add(([q], false));
         var arcOwned = RecoverLocalArcs(chains, c.Id, comp, inkMask, widthAt, dtSq, thin, minLen, ink, w, h, strokes, ct);
+        // Read before the admission loop below grows the admitted chains' tips.
+        var hatchMembers = ProposeHatchMembers(chains, arcOwned, tracer, c.Id, comp, inkMask, widthAt, thin, minLen, growLen, ink, w, h, ct);
         foreach (var (pixels, closed) in chains)
         {
             if (arcOwned.Contains(pixels)) continue;
@@ -288,6 +290,8 @@ public static partial class Centerline
                 Emit(run, closed && allThin, true);
             }
         }
+        foreach (var member in hatchMembers)
+            if (!DuplicatesLine(member, strokes)) strokes.Add(member);
 
         void Emit(List<int> run, bool closed, bool partition)
         {
@@ -327,6 +331,211 @@ public static partial class Centerline
             var stroke = BuildStroke(run, closed, med, ink, p, w, h, skel, inkMask, dtSq);
             if (stroke != null) strokes.Add(stroke);
         }
+    }
+
+    /// <summary>VEC143: family members share a direction within this angle.</summary>
+    public const double HatchAngleTolDeg = 1.0;
+    /// <summary>VEC143: adjacent family gaps stay within this share of the seed gap.</summary>
+    public const double HatchPitchTol = 0.12;
+    /// <summary>VEC143: a recovered member's source span, in its own widths.</summary>
+    public const double HatchMinAspect = 12;
+    /// <summary>VEC143: a recovered member's span stays within this share of each peer's span.</summary>
+    public const double HatchSpanTol = 0.3;
+    /// <summary>VEC143: more straight candidates than this keep their fill (bounded work).</summary>
+    public const int HatchMaxMembers = 256;
+
+    sealed record HatchLine(Vec2 Center, Vec2 Dir, double Lo, double Hi, double Width, bool Admitted, Vec2 A, Vec2 B)
+    {
+        public double Span => Hi - Lo;
+
+        public static bool SameLine(HatchLine a, HatchLine b)
+        {
+            if (Math.Abs(a.Dir.X * b.Dir.Y - a.Dir.Y * b.Dir.X) > DetMath.Sin(HatchAngleTolDeg * Math.PI / 180)) return false;
+            var delta = b.Center - a.Center;
+            if (Math.Abs(delta.X * a.Dir.Y - delta.Y * a.Dir.X) > Math.Max(a.Width, b.Width) / 2) return false;
+            return Overlap(a, b) >= .5 * Math.Min(a.Span, b.Span);
+        }
+
+        public static double Overlap(HatchLine a, HatchLine b)
+        {
+            double along = (b.Center - a.Center).Dot(a.Dir);
+            // PCA directions can straddle +/-90 degrees. Express the peer's signed
+            // walk interval in the seed's orientation before comparing or deduplicating.
+            bool reversed = a.Dir.Dot(b.Dir) < 0;
+            double lo = reversed ? -b.Hi : b.Lo;
+            double hi = reversed ? -b.Lo : b.Hi;
+            return Math.Min(a.Hi, along + hi) - Math.Max(a.Lo, along + lo);
+        }
+    }
+
+    /// <summary>
+    /// VEC143: a one-pixel width step in a raster line leaves no ridge local maximum across
+    /// it, so one drawn line can trace as a crumb, a main chain and a crumb whose main chain
+    /// misses the length gate. The gate is unchanged: the main chain's SOURCE span must
+    /// pass it, measured by walking cross-sections of uniform ink, so a solid, a wall, a
+    /// crossing or paper ends the span. That alone is not enough to redraw it. The line must
+    /// also sit in a regular parallel family (similar direction, width, span and pitch) with
+    /// independently admitted peers; compact loops and irregular marks keep their fill.
+    /// </summary>
+    static List<StrokePath> ProposeHatchMembers(List<(List<int> Pixels, bool Closed)> chains,
+        HashSet<List<int>> arcOwned, ChainTracer tracer, int id, int[] comp, bool[] inkMask, double[] widthAt,
+        double thin, int minLen, int growLen, int ink, int w, int h, CancellationToken ct)
+    {
+        var lines = new List<HatchLine>();
+        foreach (var (pixels, closed) in chains)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (closed || arcOwned.Contains(pixels)) continue;
+            if (Measure(pixels) is not { } line) continue;
+            // Two fragments of one drawn line walk to the same span: keep one.
+            if (lines.Any(o => HatchLine.SameLine(o, line))) continue;
+            if (lines.Count == HatchMaxMembers) return [];
+            lines.Add(line);
+        }
+        var result = new List<StrokePath>();
+        if (lines.Count < TextPeerMin) return result;
+        foreach (var line in lines)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (line.Admitted || line.Span < minLen || line.Span < HatchMinAspect * line.Width) continue;
+            if (!InRegularFamily(line)) continue;
+            result.Add(new StrokePath { PaletteIndex = ink, Width = line.Width, Closed = false,
+                Segments = [CubicBezier.Line(line.A, line.B)] });
+        }
+        return result;
+
+        HatchLine? Measure(List<int> pixels)
+        {
+            var samples = pixels.Where(q => widthAt[q] > 0 && tracer.Degree(q) == 2).Select(q => widthAt[q]).ToList();
+            if (samples.Count < 2) return null;
+            samples.Sort();
+            double med = samples[samples.Count / 2];
+            if (med <= 0 || med > thin || pixels.Count < LongFactor * med || samples.Count * 2 < pixels.Count) return null;
+            if (samples[samples.Count / 10] < LocalUniformLow * med || samples[samples.Count * 9 / 10] > LocalUniformHigh * med) return null;
+            double mx = 0, my = 0;
+            foreach (int q in pixels) { mx += q % w + .5; my += q / w + .5; }
+            mx /= pixels.Count; my /= pixels.Count;
+            double xx = 0, xy = 0, yy = 0;
+            foreach (int q in pixels)
+            {
+                double x = q % w + .5 - mx, y = q / w + .5 - my;
+                xx += x * x; xy += x * y; yy += y * y;
+            }
+            double angle = 0.5 * Math.Atan2(2 * xy, xx - yy);
+            var dir = new Vec2(DetMath.Cos(angle), DetMath.Sin(angle));
+            if (dir.X < -1e-9 || (Math.Abs(dir.X) <= 1e-9 && dir.Y < 0)) dir = dir * -1;
+            var normal = new Vec2(-dir.Y, dir.X);
+            var origin = new Vec2(mx, my);
+            foreach (int q in pixels)
+                if (Math.Abs((new Vec2(q % w + .5, q / w + .5) - origin).Dot(normal)) > 1.5) return null;
+            double shift = 0;
+            int sections = 0;
+            double hi = Walk(1), lo = -Walk(-1);
+            if (sections == 0) return null;
+            var center = origin + normal * (shift / sections);
+            return new HatchLine(center, dir, lo, hi, med, pixels.Count >= minLen,
+                Grow(center + dir * lo, dir * -1), Grow(center + dir * hi, dir));
+
+            double Walk(int sign)
+            {
+                double t = 0;
+                for (int step = 0; step <= 4 * minLen + pixels.Count; step++, t = step)
+                {
+                    var q = origin + dir * (sign * t);
+                    int a = Ink(q, normal, -1, med), b = Ink(q, normal, 1, med);
+                    if (a < 0 || b < 0) break;
+                    double width = a + b + 1;
+                    if (width < LocalUniformLow * med || width > LocalUniformHigh * med) break;
+                    if (Math.Abs(b - a) * .5 > 1.5) break;
+                    shift += (b - a) * .5;
+                    sections++;
+                }
+                return Math.Max(0, t - 1);
+            }
+        }
+
+        // Ink pixels from q along +-normal. -1: q itself is paper, or the section is wider
+        // than any uniform band could accept.
+        int Ink(Vec2 q, Vec2 normal, int sign, double med)
+        {
+            int limit = (int)Math.Ceiling(LocalUniformHigh * med) + 1;
+            if (!IsInk(q)) return -1;
+            for (int n = 1; n <= limit; n++)
+                if (!IsInk(q + normal * (sign * n))) return n - 1;
+            return -1;
+        }
+
+        bool IsInk(Vec2 q)
+        {
+            int x = (int)Math.Floor(q.X), y = (int)Math.Floor(q.Y);
+            return (uint)x < (uint)w && (uint)y < (uint)h && inkMask[y * w + x] && comp[y * w + x] == id;
+        }
+
+        // Same growth as an admitted chain's tip: into this component's ink only, so a
+        // joined end reaches its host's centre line and a free end stays on source ink.
+        Vec2 Grow(Vec2 end, Vec2 dir)
+        {
+            for (int n = 1; n <= growLen; n++)
+            {
+                var q = end + dir * n;
+                if (!IsInk(q)) return end + dir * (n - 1);
+            }
+            return end + dir * growLen;
+        }
+
+        bool InRegularFamily(HatchLine seed)
+        {
+            double tol = DetMath.Sin(HatchAngleTolDeg * Math.PI / 180);
+            var normal = new Vec2(-seed.Dir.Y, seed.Dir.X);
+            var peers = new List<(double Offset, HatchLine Line)>();
+            foreach (var o in lines)
+            {
+                if (Math.Abs(o.Dir.X * seed.Dir.Y - o.Dir.Y * seed.Dir.X) > tol) continue;
+                if (o.Width < 0.75 * seed.Width || o.Width > seed.Width / 0.75) continue;
+                if (Math.Abs(o.Span - seed.Span) > HatchSpanTol * seed.Span) continue;
+                if (HatchLine.Overlap(seed, o) < .5 * Math.Min(seed.Span, o.Span)) continue;
+                peers.Add(((o.Center - seed.Center).Dot(normal), o));
+            }
+            peers.Sort((a, b) => a.Offset.CompareTo(b.Offset));
+            int at = peers.FindIndex(q => ReferenceEquals(q.Line, seed));
+            int first = at, last = at;
+            double pitch = 0;
+            // The nearest gap on either side sets the pitch; ties resolve to the lower side.
+            if (at > 0) pitch = peers[at].Offset - peers[at - 1].Offset;
+            if (at + 1 < peers.Count && (pitch == 0 || peers[at + 1].Offset - peers[at].Offset < pitch))
+                pitch = peers[at + 1].Offset - peers[at].Offset;
+            if (pitch < 2.5 * seed.Width) return false;
+            while (first > 0 && Math.Abs(peers[first].Offset - peers[first - 1].Offset - pitch) <= HatchPitchTol * pitch) first--;
+            while (last + 1 < peers.Count && Math.Abs(peers[last + 1].Offset - peers[last].Offset - pitch) <= HatchPitchTol * pitch) last++;
+            if (last - first + 1 < TextPeerMin) return false;
+            int admitted = 0;
+            for (int i = first; i <= last; i++)
+                if (peers[i].Line.Admitted) admitted++;
+            return admitted >= 2;
+        }
+    }
+
+    // A proposed member never overdraws a line the admission loop already emitted.
+    static bool DuplicatesLine(StrokePath member, List<StrokePath> strokes)
+    {
+        var m = member.Segments[0];
+        var dir = (m.P3 - m.P0).Normalized();
+        double length = (m.P3 - m.P0).Length;
+        foreach (var s in strokes)
+            foreach (var g in s.Segments)
+            {
+                if (!g.IsLine(.05)) continue;
+                var d = g.P3 - g.P0;
+                double len = d.Length;
+                if (len < 1e-6) continue;
+                var u = d * (1 / len);
+                if (Math.Abs(u.X * dir.Y - u.Y * dir.X) > DetMath.Sin(2 * Math.PI / 180)) continue;
+                var delta = g.P0 - m.P0;
+                if (Math.Abs(delta.X * dir.Y - delta.Y * dir.X) > (member.Width + s.Width) / 2) continue;
+                double a = delta.Dot(dir), b = (g.P3 - m.P0).Dot(dir);
+                if (Math.Min(length, Math.Max(a, b)) - Math.Max(0, Math.Min(a, b)) >= .5 * length) return true;
+            }
+        return false;
     }
 
     // Only already fitted, long, exact straight primitives become independent objects.
