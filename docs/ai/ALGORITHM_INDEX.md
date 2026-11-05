@@ -102,6 +102,24 @@ VEC146: family overlap and deduplication align the peer signed walk interval to 
 direction: a negative direction dot product maps `[Lo,Hi]` to `[-Hi,-Lo]`, including the
 near-vertical PCA seam. Source walks, endpoints and family thresholds are unchanged.
 
+VEC147/149/151 junction-split chain weld (`Centerline.WeldJunctionSplitChains`, LineArt local
+path only, before arc recovery and admission): a stem terminating on a line raises the distance
+transform on the line's axis, so the ridge drops there and the line traces as facing fragments.
+Two facing chain ends weld when the gap is at most 2 × global median; both end pieces (2 × median
+pixels) are thin, long enough for a straightness test (`StraightRunMinPoints`) and pass the
+residual and bow gates; they are collinear within `JunctionMergeAngleDeg` and laterally within
+`LineTol`; a third open chain of at least half the admission length ends transversely within
+2 × median of the gap; and every half-step of the chord is this component's ink whose cross
+section stays uniform or, for at most 2 × line width, keeps the line's half band on one side.
+Far ends may not touch (no ring). The first weldable sorted end pair wins and the scan restarts,
+so the result is deterministic. A solid, a perpendicular crossing and paper fail the walk;
+a short walk beside an oblique through-line of similar width can pass (one such weld on the
+frozen real scan keeps the through-line intact).
+Endpoint limit: a weld never moves the merged chain's outer ends. The frozen 600-DPI
+`V91-housing-bottom` becomes one straight line with truth coverage 1.0 but stays not two-anchor:
+fitted ends are about 8 px inside the theoretical corner axes. The source corners are butt
+joints, so a round cap at those axes would paint paper; the grader and tolerances are unchanged.
+
 VEC114 local junction finishing (`CenterlineLocalJunctions.cs`): after legacy final
 snapping, before local ink release, spatially indexed same-component painted
 line/circle bands may shorten finite local line endpoints to their centerline.

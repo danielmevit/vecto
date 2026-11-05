@@ -267,6 +267,7 @@ public static partial class Centerline
         // fragments. They are evidence for this local arc pass, never legacy strokes.
         foreach (int q in c.Pixels)
             if (skel[q] && tracer.Degree(q) == 0) chains.Add(([q], false));
+        WeldJunctionSplitChains(chains, c.Id, comp, inkMask, widthAt, dtSq, thin, median, minLen, w, h);
         var arcOwned = RecoverLocalArcs(chains, c.Id, comp, inkMask, widthAt, dtSq, thin, minLen, ink, w, h, strokes, ct);
         // Read before the admission loop below grows the admitted chains' tips.
         var hatchMembers = ProposeHatchMembers(chains, arcOwned, tracer, c.Id, comp, inkMask, widthAt, thin, minLen, growLen, ink, w, h, ct);

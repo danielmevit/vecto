@@ -430,6 +430,200 @@ public class CenterlineLocalJunctionTests
         Assert.False(Same(Line(new Vec2(0, 0), new Vec2(1, 0), -10, 100)));
     }
 
+    // ---- VEC147: junction-split rail weld ----
+    //
+    // The hatch scene's bottom rail carries the same junction geometry as the CAD
+    // reference's housing bottom: the stems terminate on it from above, the elevated
+    // distance transform drops its axis pixels for each stem's width, and the rail
+    // traces as facing fragments whose short middles fail the admission gate.
+
+    static List<StrokePath> RailStrokes(VectorDocument doc, double axisY) =>
+        doc.Strokes.Where(s => s.Segments.Any(g => g.IsLine(.05) &&
+            Math.Abs(g.P0.Y - g.P3.Y) < 2 && Math.Abs(g.P0.Y - axisY) < 3)).ToList();
+
+    // Tip growth legitimately extends a rail stroke a few pixels into an obstacle's ink,
+    // so "no stroke covers BOTH sides of the obstacle" is the weld discriminator.
+    static void AssertRailNotWeldedAcross(VectorDocument doc, double axisY, double lo, double hi, string because)
+    {
+        foreach (var stroke in RailStrokes(doc, axisY))
+            foreach (var g in stroke.Segments)
+                Assert.False(Math.Min(g.P0.X, g.P3.X) < lo && Math.Max(g.P0.X, g.P3.X) > hi, because);
+    }
+
+    [Fact]
+    public void JunctionSplitRailWeldsIntoOneTwoAnchorLine()
+    {
+        const int length = 148;
+        int[] xs = [300, 371, 442, 513];
+        var doc = TraceLineArt(HatchScene(length, [(xs[0], false), (xs[1], false), (xs[2], false), (xs[3], true)]));
+        double axisY = HatchTop + length + HatchRailWidth / 2.0;
+        var rail = Assert.Single(RailStrokes(doc, axisY));
+        var line = Assert.Single(rail.Segments);
+        Assert.True(line.IsLine(.02));
+        Assert.InRange(Math.Min(line.P0.X, line.P3.X), 90, 115);
+        Assert.InRange(Math.Max(line.P0.X, line.P3.X), 1485, 1510);
+        Assert.InRange(line.P0.Y, axisY - 2, axisY + 2);
+        Assert.InRange(line.P3.Y, axisY - 2, axisY + 2);
+        // the same junctions split the top rail, where the stems hang below the axis
+        var top = Assert.Single(RailStrokes(doc, HatchTop - HatchRailWidth / 2.0));
+        var topLine = Assert.Single(top.Segments);
+        Assert.InRange(Math.Min(topLine.P0.X, topLine.P3.X), 90, 115);
+        Assert.InRange(Math.Max(topLine.P0.X, topLine.P3.X), 1400, 1430);
+        // the stems stay one editable line each, and the solid boss keeps its fill
+        foreach (int x in xs) Assert.Single(StemStrokes(doc, x));
+        var rendered = Rasterizer.Render(doc);
+        Assert.True(rendered.GetPixel(1440, HatchTop - 40).R < 128);
+        // DXF: the welded rail is one straight two-vertex polyline (y flips to CAD)
+        double dxfY = doc.Height - axisY;
+        var vertices = DxfPolylines(DxfWriter.Write(doc)).Single(v => v.Count == 2 &&
+            Math.Abs(v[0].Y - dxfY) < 1 && Math.Abs(v[1].Y - dxfY) < 1);
+        Assert.All(vertices, v => Assert.Equal(0, v.Bulge));
+    }
+
+    [Fact]
+    public void JunctionSplitButtCornersKeepUnsupportedOuterQuadrantsWhite()
+    {
+        const int length = 148;
+        int bottom = HatchTop + length;
+        double axisY = bottom + HatchRailWidth / 2.0;
+        // Butt-ended walls stop at the rail axis, just as the rail starts at each
+        // wall axis. Axis ink alone cannot authorize a full round cap at that corner.
+        bool Walls(int x, int y) => y >= HatchTop && y < bottom + HatchRailWidth / 2 &&
+            ((x >= 92 && x < 108) || (x >= 1492 && x < 1508));
+        var image = HatchScene(length, [(300, false), (371, false), (442, false), (513, true)], Walls);
+        var doc = TraceLineArt(image);
+        var rail = Assert.Single(RailStrokes(doc, axisY));
+        var line = Assert.Single(rail.Segments);
+        Assert.True(line.IsLine(.02));
+        Assert.True(Math.Min(line.P0.X, line.P3.X) > 100);
+        Assert.True(Math.Max(line.P0.X, line.P3.X) < 1500);
+        var rendered = Rasterizer.Render(doc);
+        // These pixels are inside a radius-eight cap placed at the wall/rail axes,
+        // but outside both butt rectangles. Moving to the axes would invent ink.
+        foreach (int x in new[] { 96, 1503 })
+        {
+            Assert.True(image.GetPixel(x, bottom + 12).R > 128);
+            Assert.True(rendered.GetPixel(x, bottom + 12).R > 128);
+        }
+        Assert.True(rendered.GetPixel(800, bottom + 8).R < 128);
+    }
+
+    [Fact]
+    public void JunctionSplitWeldRequiresALongTerminatingStem()
+    {
+        const int length = 148;
+        int bottom = HatchTop + length;
+        // A 40 px stub and a compact glyph loop both end on the bottom rail from above.
+        // Neither is a stroke of its own, so neither authorizes a weld across the rail,
+        // and the loop is too wide for the gap bound: the rail keeps its source fill.
+        bool Stub(int x, int y) => x >= 700 && x < 709 && y >= bottom - 40 && y < bottom;
+        bool Loop(int x, int y)
+        {
+            bool outer = x >= 800 && x < 840 && y >= bottom - 40 && y < bottom;
+            bool inner = x >= 808 && x < 832 && y >= bottom - 32 && y < bottom - 8;
+            return outer && !inner;
+        }
+        var doc = TraceLineArt(HatchScene(length, [(300, false), (371, false), (442, false), (513, true)],
+            (x, y) => Stub(x, y) || Loop(x, y)));
+        double axisY = bottom + HatchRailWidth / 2.0;
+        AssertRailNotWeldedAcross(doc, axisY, 675, 734, "no rail stroke may span the short stub");
+        AssertRailNotWeldedAcross(doc, axisY, 775, 866, "no rail stroke may span the glyph loop");
+        var rendered = Rasterizer.Render(doc);
+        Assert.True(rendered.GetPixel(704, bottom - 20).R < 128);
+        Assert.True(rendered.GetPixel(804, bottom - 20).R < 128);
+        Assert.True(rendered.GetPixel(820, bottom - 20).R > 128);
+    }
+
+    [Fact]
+    public void JunctionSplitWeldDoesNotCrossAStraddlingSolid()
+    {
+        const int length = 148;
+        int bottom = HatchTop + length;
+        bool Solid(int x, int y) => x >= 700 && x < 724 && y >= bottom - 22 && y < bottom + 38;
+        var doc = TraceLineArt(HatchScene(length, [(300, false), (371, false), (442, false), (513, true)], Solid));
+        double axisY = bottom + HatchRailWidth / 2.0;
+        AssertRailNotWeldedAcross(doc, axisY, 675, 749, "no rail stroke may run through the solid");
+        var rendered = Rasterizer.Render(doc);
+        Assert.True(rendered.GetPixel(712, bottom + 20).R < 128);
+    }
+
+    [Fact]
+    public void JunctionSplitWeldDoesNotBridgeSourcePaper()
+    {
+        const int length = 148;
+        int bottom = HatchTop + length;
+        var doc = TraceLineArt(HatchScene(length, [(300, false), (371, false), (442, false), (513, true)], null,
+            (x, y) => x >= 700 && x < 726 && y >= bottom && y < bottom + HatchRailWidth));
+        double axisY = bottom + HatchRailWidth / 2.0;
+        AssertRailNotWeldedAcross(doc, axisY, 675, 751, "no rail stroke may bridge the source paper");
+        Assert.True(Rasterizer.Render(doc).GetPixel(712, bottom + 8).R > 128);
+    }
+
+    [Fact]
+    public void JunctionSplitWeldDoesNotCrossACrossingLine()
+    {
+        const int length = 148;
+        int bottom = HatchTop + length;
+        // A thin line crossing the rail continues on BOTH sides of the axis: its own
+        // chain is transverse stem evidence, but the chord's cross section is polluted
+        // on both halves and the source-ink walk must refuse the weld.
+        bool Cross(int x, int y) => x >= 700 && x < 709 && y >= bottom - 100 && y < bottom + HatchRailWidth + 100;
+        var doc = TraceLineArt(HatchScene(length, [(300, false), (371, false), (442, false), (513, true)], Cross));
+        double axisY = bottom + HatchRailWidth / 2.0;
+        AssertRailNotWeldedAcross(doc, axisY, 675, 734, "no rail stroke may weld across the crossing");
+        Assert.False(doc.Strokes.Any(s => s.Segments.Any(g => g.IsLine(.05) &&
+            Math.Abs(g.P0.X - g.P3.X) < 2 && Math.Abs(g.P0.X - 704.5) < 3 &&
+            Math.Min(g.P0.Y, g.P3.Y) < bottom + HatchRailWidth && Math.Max(g.P0.Y, g.P3.Y) > bottom)),
+            "the crossing must keep its filled appearance");
+        var rendered = Rasterizer.Render(doc);
+        Assert.True(rendered.GetPixel(704, bottom + 8).R < 128);
+        Assert.True(rendered.GetPixel(704, bottom - 50).R < 128);
+    }
+
+    [Fact]
+    public void JunctionSplitWeldNeedsOneCleanSideOfTheBand()
+    {
+        const int length = 148;
+        int bottom = HatchTop + length;
+        // A real stem ends on the rail from above while a stub hangs from it below at
+        // the same column: the stem authorizes the junction, but the walk's cross
+        // section is polluted on both sides and the weld must still not fire.
+        bool StemAndStub(int x, int y) =>
+            (x >= 700 && x < 709 && y >= bottom - 100 && y < bottom) ||
+            (x >= 700 && x < 709 && y >= bottom + HatchRailWidth && y < bottom + HatchRailWidth + 40);
+        var doc = TraceLineArt(HatchScene(length, [(300, false), (371, false), (442, false), (513, true)], StemAndStub));
+        double axisY = bottom + HatchRailWidth / 2.0;
+        AssertRailNotWeldedAcross(doc, axisY, 675, 734, "no rail stroke may weld across the polluted band");
+        var rendered = Rasterizer.Render(doc);
+        Assert.True(rendered.GetPixel(704, bottom + HatchRailWidth + 20).R < 128);
+    }
+
+    [Fact]
+    public void JunctionSplitWeldLeavesTangentialArcCurved()
+    {
+        const int length = 148;
+        int bottom = HatchTop + length;
+        double axisY = bottom + HatchRailWidth / 2.0;
+        var center = new Vec2(700, axisY + 90);
+        // The rail ends at a quarter arc's tangency. The tangent staircase leaves facing
+        // fragments, but no stem ends there and the arc's own end piece bows: the rail
+        // must stay a straight stroke that stops at the tangency.
+        bool Arc(int x, int y)
+        {
+            var p = new Vec2(x + .5, y + .5);
+            double d = (p - center).Length;
+            return d >= 82 && d <= 98 && p.X <= 700.5 && p.Y >= axisY - 8 && p.Y <= axisY + 90;
+        }
+        var doc = TraceLineArt(HatchScene(length, [(300, false), (371, false), (442, false), (513, true)], Arc,
+            (x, y) => x >= 700 && y >= bottom && y < bottom + HatchRailWidth));
+        Assert.False(doc.Strokes.Any(s => s.Segments.Any(g => g.IsLine(.05) &&
+            Math.Abs(g.P0.Y - g.P3.Y) < 2 && Math.Abs(g.P0.Y - axisY) < 3 &&
+            Math.Min(g.P0.X, g.P3.X) < 706 && Math.Max(g.P0.X, g.P3.X) > 706)),
+            "the rail must stay straight and stop at the tangency");
+        var rendered = Rasterizer.Render(doc);
+        Assert.True(rendered.GetPixel(636, (int)(axisY + 34)).R < 128);
+    }
+
     static List<List<(double X, double Y, double Bulge)>> DxfPolylines(string dxf)
     {
         var lines = dxf.Split('\n').Select(l => l.Trim()).ToArray();
