@@ -1,11 +1,29 @@
 ---
+import SiteHeader from "../components/SiteHeader.astro";
+import SiteFooter from "../components/SiteFooter.astro";
+import { REPO_URL } from "../lib/site";
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const title = "Changelog | Vecto";
 const description =
-  "Version history for Vecto — the free, open-source image-to-vector (PNG to SVG) converter. Every release, what changed, and when.";
+  "Version history for Vecto, the open-source image-to-vector (PNG to SVG) converter for Windows. Every release, what changed, and when.";
 
 // Newest first. Add new releases at the top.
 const releases = [
+  {
+    v: "0.4.4",
+    d: "2026-10-15",
+    notes: `New app icon, friendlier tips and a new licence. The white Vecto "V" now sits on a solid navy square, so it stays clear on dark taskbars and at small sizes. Small pictures get a tip to use a bigger version, and pictures with smooth colour fades explain that fades come out as bands of colour — one line in the status bar, and the traced result never changes. Light pastel colours next to white keep their own colour instead of fading into one near-white. Vecto is AGPL-3.0 from this version (0.4.3 and earlier stay MIT), with commercial licences available.`,
+  },
+  {
+    v: "0.4.3",
+    d: "2026-10-13",
+    notes: `Tracing quality round: 15% fewer wrong pixels on icons, flags and emoji, 24% fewer on JPEGs (with 39% fewer nodes), and up to 38% fewer on real-world logos, while photos, painted art and old scans are unchanged. Straight edges in JPEGs now come out straight, small dark text in JPEGs stays dark, and large scans trace faster than in 0.4.2. The command-line tool reads JPEGs exactly like the app, so results match on Windows, Linux and macOS. Everyday failures (a locked export folder, a busy clipboard, a file that won't open) now show a short message instead of an error dialog.`,
+  },
+  {
+    v: "0.4.2",
+    d: "2026-07-19",
+    notes: `Corners move to their true sub-pixel position: straight sides are fitted as one line from both ends, and sides within 1° of horizontal, vertical or 45° snap exactly, so they come out mathematically straight. Windows packaging arrives: one script builds the single-file app, the portable ZIP and the Microsoft Store package. A portable mode keeps settings next to the app.`,
+  },
   {
     v: "0.4.1",
     d: "2026-07-08",
@@ -57,7 +75,8 @@ const releases = [
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://danielmevit.github.io/vecto/changelog/" />
+    <link rel="canonical" href="https://vecto.damt.xyz/changelog/" />
+    <meta property="og:url" content="https://vecto.damt.xyz/changelog/" />
     <style>
       :root {
         --bg: #0a0a0a;
@@ -78,17 +97,10 @@ const releases = [
         margin: 0;
         -webkit-font-smoothing: antialiased;
       }
-      main { max-width: 820px; margin: 4rem auto; padding: 0 1.5rem; }
+      main { max-width: 820px; margin: 2.5rem auto 4rem; padding: 0 clamp(16px, 4vw, 64px); box-sizing: content-box; }
       a { color: var(--accent-hi); text-decoration: none; }
       a:hover { text-decoration: underline; }
-      .top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 3rem; }
-      .brand {
-        display: flex; align-items: center; gap: 0.6rem;
-        font-weight: 700; color: var(--heading); font-size: 1.15rem;
-      }
-      .brand img { width: 28px; height: 28px; border-radius: 6px; display: block; }
-      .brand:hover { text-decoration: none; }
-      h1 { color: var(--heading); font-size: 2.5rem; font-weight: 700; letter-spacing: -0.02em; margin: 2rem 0 0.25rem; }
+      h1 { color: var(--heading); font-size: 2.5rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 0.25rem; }
       .lede { color: var(--muted); margin: 0 0 3rem; }
       .release { padding: 1.75rem 0; border-top: 1px solid var(--border); display: grid; grid-template-columns: 130px 1fr; gap: 1.5rem; }
       .release:first-of-type { border-top: none; }
@@ -96,7 +108,6 @@ const releases = [
       .rel-v { color: var(--accent-hi); font-weight: 600; font-size: 1.15rem; }
       .rel-d { color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
       .rel-notes { margin: 0; }
-      footer { text-align: center; margin-top: 5rem; padding: 3rem 0; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.9rem; }
       @media (max-width: 620px) {
         .release { grid-template-columns: 1fr; gap: 0.4rem; }
         h1 { font-size: 2rem; }
@@ -104,18 +115,12 @@ const releases = [
     </style>
   </head>
   <body>
+    <SiteHeader />
     <main>
-      <div class="top">
-        <a class="brand" href={`${base}/`} aria-label="Vecto home">
-          <img src={`${base}/assets/vecto_logo.png`} alt="" width="28" height="28" /> Vecto
-        </a>
-        <a href={`${base}/`}>&larr; Back to home</a>
-      </div>
-
       <h1>Changelog</h1>
       <p class="lede">
         Every Vecto release, what changed, and when. Newest first. Full technical detail lives in
-        <a href="https://github.com/danielmevit/vecto/blob/main/CHANGELOG.md">CHANGELOG.md</a>.
+        <a href={`${REPO_URL}/blob/main/CHANGELOG.md`}>CHANGELOG.md</a>.
       </p>
 
       {releases.map((r) => (
@@ -129,12 +134,6 @@ const releases = [
       ))}
     </main>
 
-    <footer>
-      <p>
-        <a href={`${base}/`}>Home</a> ·
-        <a href="https://github.com/danielmevit/vecto/releases">Releases</a> ·
-        <a href="https://github.com/danielmevit/vecto">GitHub</a>
-      </p>
-    </footer>
+    <SiteFooter />
   </body>
 </html>

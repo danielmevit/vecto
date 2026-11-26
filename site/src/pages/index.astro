@@ -1,5 +1,8 @@
 ---
 import fs from "node:fs";
+import SiteHeader from "../components/SiteHeader.astro";
+import SiteFooter from "../components/SiteFooter.astro";
+import { REPO_URL, RELEASES_URL, STORE_URL } from "../lib/site";
 
 // The version has one home: Directory.Build.props. Read it at build time rather
 // than restate it here, or the site will eventually advertise a version that isn't
@@ -15,21 +18,8 @@ const version = match[1];
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const title = "Vecto — Image to Vector. PNG and JPG to SVG converter for Windows.";
 const description =
-  "Open-source image-to-vector converter for Windows. Trace PNG and JPG images — logos, icons, illustrations, scans — into clean, editable SVG with exact circles, true straight lines, and zero gaps between shapes. Runs on your machine, nothing uploaded.";
+  "Image-to-vector converter for Windows. Trace PNG and JPG images — logos, icons, illustrations, scans — into clean, editable SVG with exact circles, true straight lines and zero gaps between shapes. Runs on your machine. On the Microsoft Store with a 15-day free trial.";
 const author = "Daniel Mevit";
-const repo = "https://github.com/danielmevit/vecto";
-const releases = `${repo}/releases`;
-const latest = `${repo}/releases/latest`;
-const year = 2026;
-
-// Microsoft Store. The listing URL 410s until the app passes certification, so
-// storeLive stays false until it is published: the site keeps its free-download
-// layout in production, and flipping this one flag to true switches the hero and
-// download section to the Store-first layout (price shown, Store as the lead).
-const storeUrl = "https://apps.microsoft.com/detail/9PM61P4NC8J2";
-const storePrice = "$7.99";
-const storeLive = true;
-
 const features = [
   {
     title: "No gaps. No overlaps. Ever.",
@@ -53,14 +43,18 @@ const features = [
   },
   {
     title: "Open source, no lock-in",
-    body: "AGPL-3.0-licensed and fully open source — no trial clock, no watermark, no “pro” tier holding the good output hostage. Buy it on the Store to support development, or read and build the code yourself.",
+    body: "AGPL-3.0 and fully open source, with no watermark and no “pro” tier holding the good output back. Try it free for 15 days, then buy it once.",
   },
 ];
 
 const faqs = [
   {
-    q: "Is it free or paid?",
-    a: "Both, and there's no catch either way. The Microsoft Store version is $7.99 — one-click install, automatic updates, a signed app, and it directly supports development. Vecto is also open source under the AGPL-3.0 license, so you can download the same app free from GitHub or build it yourself. No trial clock, watermark or crippled tier anywhere — you're paying for convenience and to support the work, not for features.",
+    q: "What does it cost?",
+    a: "Vecto is a one-time purchase on the Microsoft Store, with a 15-day free trial first. No subscription and no ads.",
+  },
+  {
+    q: "Is it safe to install?",
+    a: "Yes. Vecto comes from the Microsoft Store, which checks every app before it is listed. Vecto has no network code and uploads nothing.",
   },
   {
     q: "Is my artwork uploaded anywhere?",
@@ -76,22 +70,55 @@ const faqs = [
   },
   {
     q: "Can I use it on Linux or macOS?",
-    a: "The full tracing engine ships as the vecto command-line tool for Linux and macOS — trace, batch and benchmark from any terminal. The graphical app is Windows-only today; a cross-platform version is on the roadmap.",
+    a: "The full tracing engine ships as the vecto command-line tool for Linux and macOS: trace, batch and benchmark from any terminal. Get it from GitHub. The Windows app comes from the Microsoft Store; a cross-platform app is on the roadmap.",
   },
   {
     q: "What do I do with an SVG?",
     a: "Open or paste it in Figma, Adobe Illustrator, Inkscape or Affinity and edit every shape. Send it to a laser cutter or cutting plotter. Put it on a website. Print it at any size — business card to billboard — with no loss of sharpness.",
   },
+  {
+    q: "How do I remove it?",
+    a: "Uninstall it from Windows Settings; that also removes its settings.",
+  },
 ];
 
 const cmp = [
-  { k: "Price", v: "Free · $7.99", p: "Free", i: "Subscription", m: "Paid" },
-  { k: "Full color", v: "✅", p: "⚠️ layer stacking", i: "✅", m: "✅" },
-  { k: "Gap & overlap-free output", v: "✅ by construction", p: "❌", i: "⚠️", m: "✅" },
-  { k: "Exact lines & circles", v: "✅", p: "lines only", i: "❌", m: "❌" },
-  { k: "Open source", v: "✅", p: "✅", i: "❌", m: "❌" },
-  { k: "Headless CLI + benchmark", v: "✅", p: "CLI only", i: "❌", m: "❌" },
+  { k: "Price", v: "One-time purchase", p: "Free", i: "Subscription", m: "Paid" },
+  { k: "Full color", v: "Yes", p: "Layer stacking", i: "Yes", m: "Yes" },
+  { k: "Gap & overlap-free output", v: "Yes, by construction", p: "No", i: "Partly", m: "Yes" },
+  { k: "Exact lines & circles", v: "Yes", p: "lines only", i: "No", m: "No" },
+  { k: "Open source", v: "Yes", p: "Yes", i: "No", m: "No" },
+  { k: "Headless CLI + benchmark", v: "Yes", p: "CLI only", i: "No", m: "No" },
 ];
+const cellClass = (t: string) => (t.startsWith("Yes") ? "yes" : t === "No" ? "no" : undefined);
+
+const softwareLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Vecto",
+  applicationCategory: "DesignApplication",
+  operatingSystem: "Windows 10, Windows 11",
+  description,
+  url: "https://vecto.damt.xyz/",
+  downloadUrl: STORE_URL,
+  installUrl: STORE_URL,
+  screenshot: "https://vecto.damt.xyz/assets/vecto_app_screenshot.png",
+  softwareVersion: version,
+  author: { "@type": "Person", name: author, url: "https://github.com/danielmevit" },
+  publisher: { "@type": "Organization", name: "damt.xyz", url: "https://damt.xyz" },
+  license: "https://www.gnu.org/licenses/agpl-3.0.html",
+  keywords:
+    "image to vector, PNG to SVG, JPG to SVG, vectorize logo, image tracing, auto trace, bitmap to vector, Vector Magic alternative, Image Trace alternative, SVG converter",
+};
+const faqLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: faqs.map((f) => ({
+    "@type": "Question",
+    name: f.q,
+    acceptedAnswer: { "@type": "Answer", text: f.a },
+  })),
+};
 ---
 
 <!DOCTYPE html>
@@ -114,7 +141,7 @@ const cmp = [
     <meta name="description" content={description} />
     <meta
       name="keywords"
-      content="image to vector converter, PNG to SVG, JPG to SVG, vectorize logo, image tracing software, auto trace, bitmap to vector graphics, free Vector Magic alternative, Illustrator Image Trace alternative, potrace alternative with color, SVG converter Windows, vectorize image free, raster to vector"
+      content="image to vector converter, PNG to SVG, JPG to SVG, vectorize logo, image tracing software, auto trace, bitmap to vector graphics, Vector Magic alternative, Illustrator Image Trace alternative, potrace alternative with color, SVG converter Windows, raster to vector"
     />
     <meta name="author" content={author} />
 
@@ -128,33 +155,17 @@ const cmp = [
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://danielmevit.github.io/vecto/" />
+    <link rel="canonical" href="https://vecto.damt.xyz/" />
+    <meta property="og:url" content="https://vecto.damt.xyz/" />
     <meta
       property="og:image"
-      content="https://danielmevit.github.io/vecto/assets/vecto_app_screenshot.png"
+      content="https://vecto.damt.xyz/assets/vecto_app_screenshot.png"
     />
     <meta property="og:site_name" content="Vecto" />
     <meta name="twitter:card" content="summary_large_image" />
 
-    <script type="application/ld+json" is:inline set:html={JSON.stringify({
-      "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      name: "Vecto",
-      applicationCategory: "DesignApplication",
-      operatingSystem: "Windows 10, Windows 11 (64-bit); CLI also on Linux and macOS",
-      description:
-        "Open-source image-to-vector converter for Windows. Traces PNG and JPG images into clean, editable SVG with mathematically exact circles, true straight lines, and zero gaps between shapes. Runs locally.",
-      url: "https://danielmevit.github.io/vecto/",
-      downloadUrl: "https://github.com/danielmevit/vecto/releases",
-      screenshot: "https://danielmevit.github.io/vecto/assets/vecto_app_screenshot.png",
-      softwareVersion: version,
-      author: { "@type": "Person", name: author, url: "https://github.com/danielmevit" },
-      license: "https://www.gnu.org/licenses/agpl-3.0.html",
-      isAccessibleForFree: true,
-      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-      keywords:
-        "image to vector, PNG to SVG, JPG to SVG, vectorize logo, image tracing, auto trace, bitmap to vector, Vector Magic alternative, Image Trace alternative, SVG converter",
-    })} />
+    <script type="application/ld+json" is:inline set:html={JSON.stringify(softwareLd)} />
+    <script type="application/ld+json" is:inline set:html={JSON.stringify(faqLd)} />
 
     <style is:global>
       :root {
@@ -167,13 +178,14 @@ const cmp = [
         --text: #c9c9c9;
         --heading: #ffffff;
         --muted: #8c8c8c;
-        --faint: #6e6e6e;
+        --faint: #8a8a8a;
         --border: #232323;
         --border-hi: #2e2e2e;
         --accent: #0c8ce9;
         --accent-hi: #3fa4ee;
+        --accent-btn: #0a6fc2; /* white text ≥ 4.5:1 (AA) */
+        --accent-btn-hover: #0960ab;
         --radius: 14px;
-        --wrap: 1080px;
       }
 
       * { box-sizing: border-box; }
@@ -192,62 +204,36 @@ const cmp = [
       img { max-width: 100%; height: auto; display: block; }
       a { color: var(--accent-hi); }
 
-      .wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 1.5rem; }
+      .wrap { width: 100%; padding: 0 clamp(16px, 4vw, 64px); }
 
       h1, h2, h3 { color: var(--heading); line-height: 1.2; }
 
-      /* ---------- nav ---------- */
-      /* Full-width bar that sticks to the top. The script at the end of <body>
-         reveals it near the top and on any upward scroll, and hides it while
-         scrolling down. position:sticky keeps its space in flow, so the hero
-         does not jump on load and no spacer is needed. */
-      .topbar {
-        position: sticky; top: 0; z-index: 50;
-        background: var(--bg);
-        transition: transform 0.28s ease;
-      }
-      .topbar.is-hidden { transform: translateY(-100%); }
-      .topbar.is-pinned { border-bottom: 1px solid var(--border); }
-      nav {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 1.1rem 0; gap: 1rem;
-      }
-      .brand {
-        display: flex; align-items: center; gap: 0.6rem;
-        font-weight: 700; color: var(--heading); text-decoration: none; font-size: 1.15rem;
-      }
-      .brand img { width: 26px; height: 26px; border-radius: 6px; flex: none; }
-      nav .links { display: flex; align-items: center; gap: 1.3rem; }
-      nav .links a {
-        color: var(--muted); text-decoration: none; font-weight: 500; font-size: 0.95rem;
-      }
-      nav .links a:hover { color: var(--heading); }
-
       .btn {
         display: inline-flex; align-items: center; gap: 0.5rem;
-        background: var(--accent); color: #fff !important;
+        background: var(--accent-btn); color: #fff !important;
         padding: 0.7rem 1.25rem; border-radius: 999px;
         font-weight: 600; text-decoration: none; border: 1px solid transparent;
         transition: background .12s ease, transform .12s ease;
       }
-      .btn:hover { background: var(--accent-hi); transform: translateY(-1px); }
+      .btn:hover { background: var(--accent-btn-hover); transform: translateY(-1px); }
       .btn.ghost { background: transparent; color: var(--text) !important; border-color: var(--border-hi); }
       .btn.ghost:hover { border-color: var(--muted); background: transparent; }
       .btn.big { padding: 0.9rem 1.6rem; font-size: 1.02rem; }
 
       /* ---------- hero ---------- */
-      .hero { padding: 3.5rem 0 1rem; text-align: center; }
+      .hero { padding-block: 3.5rem 1rem; text-align: center; }
       .hero h1 { font-size: clamp(2.1rem, 5vw, 3.3rem); margin: 0 0 1rem; letter-spacing: -0.02em; }
       .hero h1 .hl { color: var(--accent-hi); }
       .hero p.lead {
-        font-size: clamp(1.05rem, 2vw, 1.2rem); max-width: 660px; margin: 0 auto 1.6rem;
+        font-size: clamp(1.05rem, 2vw, 1.2rem); max-width: 62ch; margin: 0 auto 1.6rem;
         color: var(--text);
       }
       .cta { display: flex; gap: 0.7rem; justify-content: center; flex-wrap: wrap; }
-      .under-cta { color: var(--muted); font-size: 0.85rem; margin-top: 0.9rem; }
+      .trial-line { color: var(--text); font-size: 0.95rem; margin: 0.9rem 0 0; }
+      .under-cta { color: var(--muted); font-size: 0.85rem; margin: 0.4rem 0 0; }
 
       .shot {
-        margin: 2.5rem auto 0; border: 1px solid var(--border-hi); border-radius: var(--radius);
+        width: min(100%, 1400px); margin: 2.5rem auto 0; border: 1px solid var(--border-hi); border-radius: var(--radius);
         overflow: hidden; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
       }
       .shot-caption { color: var(--faint); font-size: 0.85rem; margin: 1rem 0 0; }
@@ -256,10 +242,12 @@ const cmp = [
       section { padding: 3.5rem 0; }
       .section-head { text-align: center; margin-bottom: 2.2rem; }
       .section-head h2 { font-size: clamp(1.5rem, 3vw, 2rem); margin: 0 0 0.5rem; }
-      .section-head p { color: var(--muted); margin: 0; }
+      .section-head p { color: var(--muted); margin: 0 auto; max-width: 70ch; }
       .band { background: var(--bg-soft); border-block: 1px solid var(--border); }
 
-      .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
+      .grid { display: grid; gap: 1rem; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      @media (max-width: 980px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+      @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } }
       .card {
         background: var(--card); border: 1px solid var(--border);
         border-radius: var(--radius); padding: 1.4rem;
@@ -270,7 +258,7 @@ const cmp = [
       .card p { margin: 0; font-size: 0.95rem; color: var(--text); }
 
       /* ---------- steps ---------- */
-      .steps { counter-reset: step; display: grid; gap: 0.9rem; max-width: 720px; margin: 0 auto; }
+      .steps { counter-reset: step; display: grid; gap: 0.9rem; max-width: 760px; margin: 0 auto; padding: 0; list-style: none; }
       .step {
         display: flex; gap: 1rem; align-items: flex-start;
         background: var(--card); border: 1px solid var(--border);
@@ -279,7 +267,7 @@ const cmp = [
       .step .n {
         counter-increment: step; flex: none;
         width: 28px; height: 28px; border-radius: 50%;
-        background: var(--accent); color: #fff; font-weight: 700; font-size: 0.9rem;
+        background: var(--accent-btn); color: #fff; font-weight: 700; font-size: 0.9rem;
         display: grid; place-items: center;
       }
       .step .n::before { content: counter(step); }
@@ -292,7 +280,7 @@ const cmp = [
 
       /* ---------- terminal ---------- */
       .term {
-        max-width: 720px; margin: 0 auto;
+        max-width: 760px; margin: 0 auto;
         background: var(--bg); border: 1px solid var(--border-hi);
         border-radius: var(--radius); padding: 1.3rem 1.5rem;
         font-family: Consolas, "SF Mono", SFMono-Regular, Menlo, monospace;
@@ -315,31 +303,14 @@ const cmp = [
       .cmp thead th { border-top: none; color: var(--heading); font-weight: 600; }
       .cmp td:first-child, .cmp th:first-child { text-align: left; color: var(--muted); }
       .cmp .vecto { color: var(--heading); font-weight: 600; background: rgba(12, 140, 233, 0.08); }
+      .cmp td.yes { color: var(--accent-hi); font-weight: 600; }
+      .cmp td.no { color: var(--muted); }
       .cmp thead th.vecto { color: var(--accent-hi); background: rgba(12, 140, 233, 0.14); }
 
-      /* ---------- downloads ---------- */
-      .dl-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-      .dl {
-        background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-        padding: 1.3rem; text-align: center;
-      }
-      .dl h3 { margin: 0 0 0.2rem; font-size: 1rem; }
-      .dl .os { color: var(--muted); font-size: 0.85rem; margin: 0 0 0.9rem; }
-      .dl .sub-dl { color: var(--muted); font-size: 0.85rem; margin: 0.8rem 0 0; }
-      /* the Store card: the recommended, paid path — accent-outlined and badged */
-      .dl-store { position: relative; border-color: var(--accent); background: var(--card-hover); }
-      .dl-badge {
-        position: absolute; top: -0.6rem; left: 50%; transform: translateX(-50%);
-        background: var(--accent); color: #fff; font-size: 0.7rem; font-weight: 700;
-        letter-spacing: 0.03em; text-transform: uppercase; white-space: nowrap;
-        padding: 0.15rem 0.6rem; border-radius: 999px;
-      }
-      .note {
-        margin-top: 1.4rem; padding: 0.9rem 1.1rem; border-radius: 10px;
-        background: var(--bg-soft); border: 1px solid var(--border);
-        color: var(--muted); font-size: 0.88rem;
-      }
-      .note b { color: var(--text); }
+      /* ---------- install ---------- */
+      .step h3 { margin: 0; font-size: 1rem; }
+      .install-alt { text-align: center; color: var(--muted); font-size: 0.9rem; margin: 1.3rem 0 0; }
+      code { font-family: Consolas, "SF Mono", Menlo, monospace; font-size: 0.9em; }
 
       /* ---------- faq ---------- */
       .faq { max-width: 760px; margin: 0 auto; }
@@ -355,45 +326,18 @@ const cmp = [
       details[open] summary::after { content: "–"; }
       details p { margin: 0.7rem 0 0; color: var(--text); }
 
-      /* ---------- footer ---------- */
-      footer {
-        border-top: 1px solid var(--border); padding: 2.2rem 0 3rem;
-        color: var(--muted); font-size: 0.88rem;
-      }
-      footer .row { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-      footer a { color: var(--muted); }
-      footer a:hover { color: var(--heading); }
-
       @media (max-width: 640px) {
-        nav .links a:not(.btn) { display: none; }
         .hero { padding-top: 2rem; }
       }
       @media (prefers-reduced-motion: reduce) {
         html { scroll-behavior: auto; }
         .btn { transition: none; }
-        .topbar { transition: none; }
       }
     </style>
   </head>
 
   <body>
-    <div class="topbar" id="topbar">
-      <div class="wrap">
-        <nav>
-          <a class="brand" href={`${base}/`}>
-            <img src={`${base}/assets/vecto_logo.png`} alt="" width="26" height="26" /> Vecto
-          </a>
-          <div class="links">
-            <a href="#features">Features</a>
-            <a href="#how">How it works</a>
-            <a href="#compare">Compare</a>
-            <a href={`${base}/changelog/`}>Changelog</a>
-            <a href={repo}>GitHub</a>
-            <a class="btn" href="#download">Download</a>
-          </div>
-        </nav>
-      </div>
-    </div>
+    <SiteHeader />
 
     <header class="wrap hero">
       <h1>Turn any image into <span class="hl">clean vectors</span></h1>
@@ -403,21 +347,11 @@ const cmp = [
         between shapes. Open source, and it runs on your machine.
       </p>
       <div class="cta">
-        {storeLive ? (
-          <>
-            <a class="btn big" href={storeUrl}>Get it on the Microsoft Store — {storePrice}</a>
-            <a class="btn big ghost" href="#download">Or download free</a>
-          </>
-        ) : (
-          <>
-            <a class="btn big" id="dl-hero" href={latest}>Download for Windows</a>
-            <a class="btn big ghost" href="#download">All downloads</a>
-          </>
-        )}
+        <a class="btn big" href={STORE_URL}>Get it on the Microsoft Store</a>
+        <a class="btn big ghost" href="#how">How it works</a>
       </div>
-      <p class="under-cta">
-        One file, no install — v{version} · AGPL-3.0 · CLI for Linux &amp; macOS · nothing uploaded, no account
-      </p>
+      <p class="trial-line">Try it free for 15 days, then buy it once.</p>
+      <p class="under-cta">Windows 10 and 11 · v{version} · AGPL-3.0 · Nothing uploaded, no account</p>
 
       <div class="shot">
         <img
@@ -436,7 +370,7 @@ const cmp = [
       <div class="wrap">
         <div class="section-head">
           <h2>Output that looks designed, not traced</h2>
-          <p>Most free converters leave hairline gaps, wobbly curves and lumpy circles. Vecto's engine was built around not doing that.</p>
+          <p>Most converters leave hairline gaps, wobbly curves and lumpy circles. Vecto's engine was built around not doing that.</p>
         </div>
         <div class="grid">
           {features.map((f) => (
@@ -500,10 +434,10 @@ const cmp = [
               {cmp.map((r) => (
                 <tr>
                   <td>{r.k}</td>
-                  <td class="vecto">{r.v}</td>
-                  <td>{r.p}</td>
-                  <td>{r.i}</td>
-                  <td>{r.m}</td>
+                  <td class:list={["vecto", cellClass(r.v)]}>{r.v}</td>
+                  <td class={cellClass(r.p)}>{r.p}</td>
+                  <td class={cellClass(r.i)}>{r.i}</td>
+                  <td class={cellClass(r.m)}>{r.m}</td>
                 </tr>
               ))}
             </tbody>
@@ -515,45 +449,15 @@ const cmp = [
     <section id="download">
       <div class="wrap">
         <div class="section-head">
-          <h2>Download Vecto {version}</h2>
-          {storeLive
-            ? <p>One click and {storePrice} on the Microsoft Store, or the free open-source build direct.</p>
-            : <p>Free under the AGPL-3.0 open-source license. No account, no strings.</p>}
+          <h2>Get started in a minute</h2>
+          <p>Windows 10 or 11, 64-bit. The Microsoft Store installs Vecto and keeps it up to date.</p>
         </div>
-        <div class="dl-grid">
-          {storeLive && (
-            <div class="dl dl-store">
-              <div class="dl-badge">Recommended</div>
-              <h3>Microsoft Store</h3>
-              <p class="os">Windows 10 / 11 · one-click install</p>
-              <a class="btn" href={storeUrl}>Get on the Store — {storePrice}</a>
-              <p class="sub-dl">Auto-updates, signed &amp; certified, and it directly supports development.</p>
-            </div>
-          )}
-          <div class="dl">
-            <h3>{storeLive ? "Windows — direct" : "Windows"}</h3>
-            <p class="os">10 / 11 · 64-bit · desktop app</p>
-            <a class="btn" id="dl-win-exe" href={latest}>Get the app (.exe)</a>
-            <p class="sub-dl">{storeLive ? "Free, unsigned — you update it yourself." : "One self-contained file — no install."}<br /><a id="dl-win-zip" href={latest}>App + CLI portable ZIP</a> also available</p>
-          </div>
-          <div class="dl">
-            <h3>Linux</h3>
-            <p class="os">x64 · command-line tracer</p>
-            <a class="btn" id="dl-linux" href={latest}>Get the CLI</a>
-            <p class="sub-dl">Single binary — <code>chmod +x</code> and run</p>
-          </div>
-          <div class="dl">
-            <h3>macOS</h3>
-            <p class="os">Apple Silicon &amp; Intel · command-line tracer</p>
-            <a class="btn" id="dl-mac-arm" href={latest}>Get the CLI</a>
-            <p class="sub-dl">Apple Silicon build — <a id="dl-mac-x64" href={latest}>Intel build</a> on the releases page</p>
-          </div>
-        </div>
-        <p class="note">
-          New unsigned apps make Windows SmartScreen cautious on first run — choose
-          <b>More info → Run anyway</b>. SHA-256 checksums for every file are in the
-          release notes, and you can always <a href={repo}>read the source</a> or build it yourself.
-        </p>
+        <ol class="steps">
+          <li class="step"><span class="n" aria-hidden="true"></span><div><h3>Get it from the Microsoft Store</h3><p>Open Vecto on the <a href={STORE_URL}>Microsoft Store</a> and install it.</p></div></li>
+          <li class="step"><span class="n" aria-hidden="true"></span><div><h3>Try it free for 15 days</h3><p>Drop in an image and trace it. Every feature works during the trial.</p></div></li>
+          <li class="step"><span class="n" aria-hidden="true"></span><div><h3>Buy it once</h3><p>Keep Vecto after the trial with a one-time purchase in the Store.</p></div></li>
+        </ol>
+        <p class="install-alt">On Linux or macOS? The vecto command-line tool is <a href={RELEASES_URL}>on GitHub</a>.</p>
       </div>
     </section>
 
@@ -571,73 +475,6 @@ const cmp = [
       </div>
     </section>
 
-    <footer>
-      <div class="wrap">
-        <div class="row">
-          <div>
-            © {year} <a href="https://github.com/danielmevit">Daniel Mevit</a> · Made by
-            <a href="https://damt.xyz">damt.xyz</a>
-          </div>
-          <div>
-            <a href={repo}>GitHub</a> ·
-            <a href={releases}>Releases</a> ·
-            <a href={`${base}/changelog/`}>Changelog</a> ·
-            <a href={`${base}/privacy/`}>Privacy</a> ·
-            <a href={`${repo}/blob/main/LICENSE`}>AGPL-3.0 License</a>
-          </div>
-        </div>
-      </div>
-    </footer>
-
-    <!-- Progressive enhancement: point download buttons at the newest release's
-         actual files. Static fallbacks (the releases page) work without JS. -->
-    <script is:inline>
-      (function () {
-        var pick = {
-          "dl-hero": function (n) { return /^Vecto-[\d.]+\.exe$/.test(n); },
-          "dl-win-exe": function (n) { return /^Vecto-[\d.]+\.exe$/.test(n); },
-          "dl-win-zip": function (n) { return /win-x64\.zip$/i.test(n); },
-          "dl-linux": function (n) { return /linux-x64$/.test(n); },
-          "dl-mac-arm": function (n) { return /osx-arm64$/.test(n); },
-          "dl-mac-x64": function (n) { return /osx-x64$/.test(n); }
-        };
-        fetch("https://api.github.com/repos/danielmevit/vecto/releases/latest")
-          .then(function (r) { return r.ok ? r.json() : null; })
-          .then(function (rel) {
-            if (!rel || !rel.assets) return;
-            Object.keys(pick).forEach(function (id) {
-              var el = document.getElementById(id);
-              if (!el) return;
-              var asset = rel.assets.find(function (a) { return pick[id](a.name); });
-              if (asset) el.href = asset.browser_download_url;
-            });
-          })
-          .catch(function () { /* fallbacks already point at the releases page */ });
-      })();
-    </script>
-    <script is:inline>
-      (function () {
-        var bar = document.getElementById("topbar");
-        if (!bar) return;
-        var last = window.pageYOffset || 0;
-        var ticking = false;
-        function update() {
-          var y = window.pageYOffset || 0;
-          bar.classList.toggle("is-pinned", y > 4);
-          // near the top, or moving up -> show; moving down past the bar -> hide.
-          // the 2px deadband stops trackpad jitter from flickering the bar.
-          if (y <= bar.offsetHeight || y < last - 2) {
-            bar.classList.remove("is-hidden");
-          } else if (y > last + 2) {
-            bar.classList.add("is-hidden");
-          }
-          last = y;
-          ticking = false;
-        }
-        window.addEventListener("scroll", function () {
-          if (!ticking) { ticking = true; window.requestAnimationFrame(update); }
-        }, { passive: true });
-      })();
-    </script>
+    <SiteFooter />
   </body>
 </html>

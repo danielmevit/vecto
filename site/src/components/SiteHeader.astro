@@ -1,0 +1,86 @@
+---
+import { REPO_URL, STORE_URL } from '../lib/site';
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const home = `${base}/`;
+---
+<div class="topbar" id="topbar">
+  <div class="wrap">
+    <nav aria-label="Main">
+      <a class="brand" href={home}>
+        <img src={`${base}/assets/vecto_logo.png`} alt="" width="26" height="26" /> Vecto
+      </a>
+      <div class="links">
+        <a class="nav-anchor" href={`${home}#features`}>Features</a>
+        <a class="nav-anchor" href={`${home}#how`}>How it works</a>
+        <a class="nav-anchor" href={`${home}#compare`}>Compare</a>
+        <a class="nav-anchor" href={`${home}#faq`}>FAQ</a>
+        <a class="nav-cta" href={STORE_URL} aria-label="Get it on the Microsoft Store"><span class="cta-long">Get it on the Microsoft Store</span><span class="cta-short" aria-hidden="true">Get Vecto</span></a>
+        <a class="gh" href={REPO_URL} aria-label="Source code on GitHub" title="Source code on GitHub">
+          <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        </a>
+      </div>
+    </nav>
+  </div>
+</div>
+
+<script is:inline>
+  (function () {
+    var bar = document.getElementById("topbar");
+    if (!bar) return;
+    var last = window.pageYOffset || 0;
+    var ticking = false;
+    function update() {
+      var y = window.pageYOffset || 0;
+      bar.classList.toggle("is-pinned", y > 4);
+      // near the top, or moving up -> show; moving down past the bar -> hide.
+      if (y <= bar.offsetHeight || y < last - 2) bar.classList.remove("is-hidden");
+      else if (y > last + 2) bar.classList.add("is-hidden");
+      last = y;
+      ticking = false;
+    }
+    window.addEventListener("scroll", function () {
+      if (!ticking) { ticking = true; window.requestAnimationFrame(update); }
+    }, { passive: true });
+  })();
+</script>
+
+<style>
+  * { box-sizing: border-box; }
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    background: #0a0a0a;
+    transition: transform 0.28s ease;
+  }
+  .topbar.is-hidden { transform: translateY(-100%); }
+  .topbar.is-pinned { border-bottom: 1px solid #232323; }
+  .wrap { width: 100%; padding: 0 clamp(16px, 4vw, 64px); }
+  nav { display: flex; align-items: center; justify-content: space-between; padding: 0.9rem 0; gap: 1rem; }
+  .brand {
+    display: flex; align-items: center; gap: 0.6rem; flex: none;
+    font-weight: 700; color: #fff; text-decoration: none; font-size: 1.15rem;
+  }
+  .brand img { width: 26px; height: 26px; border-radius: 6px; display: block; }
+  .links { display: flex; align-items: center; gap: 1.2rem; min-width: 0; }
+  .nav-anchor { color: #a3a3a3; text-decoration: none; font-weight: 500; font-size: 0.95rem; white-space: nowrap; }
+  .nav-anchor:hover { color: #fff; }
+  .nav-cta {
+    display: inline-flex; align-items: center; white-space: nowrap;
+    background: #0a6fc2; color: #fff; padding: 0.55rem 1.1rem; border-radius: 999px;
+    font-weight: 600; font-size: 0.92rem; text-decoration: none;
+    transition: background .12s ease;
+  }
+  .nav-cta:hover { background: #0960ab; }
+  .cta-short { display: none; }
+  .gh {
+    display: inline-grid; place-items: center; width: 38px; height: 38px; flex: none;
+    border-radius: 50%; color: #c9c9c9; border: 1px solid #2e2e2e;
+  }
+  .gh:hover { color: #fff; border-color: #8c8c8c; }
+  @media (max-width: 860px) { .nav-anchor { display: none; } }
+  @media (max-width: 480px) {
+    .cta-long { display: none; }
+    .cta-short { display: inline; }
+    .links { gap: 0.6rem; }
+  }
+  @media (prefers-reduced-motion: reduce) { .topbar, .nav-cta { transition: none; } }
+</style>
