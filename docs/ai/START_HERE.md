@@ -7,7 +7,7 @@ no overlaps between shapes. C# / .NET 8 / WPF.
 
 **Current status:** v0.4.4 released 2026-10-15 (GitHub; Store update submitted by the owner); v0.4.3 was the previous release ($7.99 one-time,
 https://apps.microsoft.com/detail/9PM61P4NC8J2) and free/open-source on GitHub Releases;
-product site is Store-first at https://danielmevit.github.io/vecto/ (`site/`, deploys from
+product site is Store-first at https://vecto.damt.xyz/ (`site/`, deploys from
 `main`). Full snapshot in `STATUS.md`.
 **2026-10-12 review → `docs/ai/reviews/2026-10-12-review.md`:** the CLI/test build is broken by
 ImageSharp advisories (blocks Store builds too); fix plan and owner decisions are there.

@@ -46,8 +46,8 @@ allowed to differ; if it objects, set both to the reserved name.
 | Category | **Photo & video** (fits better than Productivity for a design tool) |
 | Subcategory | (leave blank) |
 | Secondary category | (optional; leave blank) |
-| Privacy policy URL | `https://danielmevit.github.io/vecto/privacy/` |
-| Website | `https://danielmevit.github.io/vecto/` |
+| Privacy policy URL | `https://vecto.damt.xyz/privacy/` |
+| Website | `https://vecto.damt.xyz/` |
 | Support contact info | `https://github.com/danielmevit/vecto/issues` |
 
 **Product declarations** (checkboxes):

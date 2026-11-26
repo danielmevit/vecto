@@ -92,7 +92,7 @@ Photo & video (or: Productivity; Photo & video fits a design tool better)
 ## Privacy questionnaire
 - Does the app access, collect or transmit personal information? **No.**
   (No network code exists in the app; nothing leaves the machine.)
-- Privacy policy URL: `https://danielmevit.github.io/vecto/privacy/`
+- Privacy policy URL: `https://vecto.damt.xyz/privacy/`
 
 ## Screenshots (v0.4.3 presentation set — upload in this order)
 Folder: `Vecto/store-images/v0.4.3/` (outside the repo), 3840×2160 PNG, 1.5–2.7 MB each (Store: up to 10 desktop
