@@ -13,6 +13,8 @@ const body = `# Vecto
 - Source code: ${REPO_URL} (AGPL-3.0 from v0.4.4; v0.4.3 and earlier were MIT)
 - Support: support@damt.xyz
 - Author: Daniel Mevit (https://damt.xyz)
+- Development: built by damt.xyz with extensive use of generative AI tools (code, tests, documentation, packaging, website, store listing and marketing materials, maintenance),
+  steered by a real person who decides what is released. Vecto itself runs no AI model.
 
 ## Tech Stack
 * Language: C# / .NET 8

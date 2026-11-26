@@ -136,6 +136,14 @@ that Daniel Mitev may relicense your contribution, including under commercial li
 
 Brand (name, logo, app icon, colours): [docs/brand/BRAND.md](docs/brand/BRAND.md).
 
+## Development & AI disclosure
+
+Vecto is designed, directed and maintained by [damt.xyz](https://damt.xyz) with extensive use of generative AI tools, from start to finish: most of the application code and tests, the documentation, packaging and build automation, the website, the store listing and other marketing materials, and ongoing maintenance.
+
+This applies only to how Vecto is made and marketed. At runtime Vecto uses no AI model: tracing is done by Vecto's own deterministic algorithm on your computer, and nothing you trace is sent anywhere.
+
+Throughout, a real person steers the work and decides what is released.
+
 ## License
 
 From v0.4.4 on, Vecto is licensed under the [GNU AGPL-3.0-only](LICENSE) — © 2026 Daniel Mitev
