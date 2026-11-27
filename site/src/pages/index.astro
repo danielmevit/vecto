@@ -219,6 +219,7 @@ const faqLd = {
       .btn.ghost { background: transparent; color: var(--text) !important; border-color: var(--border-hi); }
       .btn.ghost:hover { border-color: var(--muted); background: transparent; }
       .btn.big { padding: 0.9rem 1.6rem; font-size: 1.02rem; }
+      .btn.big .store-logo { display: block; width: 20px; height: 20px; flex: none; }
 
       /* ---------- hero ---------- */
       .hero { padding-block: 3.5rem 1rem; text-align: center; }
@@ -347,7 +348,7 @@ const faqLd = {
         between shapes. Open source, and it runs on your machine.
       </p>
       <div class="cta">
-        <a class="btn big" href={STORE_URL}>Get it on the Microsoft Store</a>
+        <a class="btn big" href={STORE_URL} aria-label="Get Vecto on the Microsoft Store"><img class="store-logo" src="/ms-store.svg" alt="" width="20" height="20" />Microsoft Store</a>
         <a class="btn big ghost" href="#how">How it works</a>
       </div>
       <p class="trial-line">Try it free for 15 days, then buy it once.</p>
