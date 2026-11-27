@@ -334,7 +334,10 @@ const faqLd = {
         html { scroll-behavior: auto; }
         .btn { transition: none; }
       }
-    </style>
+    
+  /* Phones: no Store button (these apps are for desktops; the footer keeps the Microsoft Store link). */
+  @media (max-width: 559px) { .store-btn { display: none !important; } }
+</style>
   </head>
 
   <body>
@@ -348,7 +351,7 @@ const faqLd = {
         between shapes. Open source, and it runs on your machine.
       </p>
       <div class="cta">
-        <a class="btn big" href={STORE_URL} aria-label="Get Vecto on the Microsoft Store"><img class="store-logo" src="/ms-store.svg" alt="" width="20" height="20" />Microsoft Store</a>
+        <a class="btn big store-btn" href={STORE_URL} aria-label="Get Vecto on the Microsoft Store"><img class="store-logo" src="/ms-store.svg" alt="" width="20" height="20" />Microsoft Store</a>
         <a class="btn big ghost" href="#how">How it works</a>
       </div>
       <p class="trial-line">Try it free for 15 days, then buy it once.</p>
